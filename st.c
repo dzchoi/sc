@@ -19,6 +19,7 @@
 
 #include "st.h"
 #include "win.h"
+#include "panel.h"
 
 #if   defined(__linux)
  #include <pty.h>
@@ -814,6 +815,7 @@ ttynew(const char *line, char *cmd, const char *out, char **args)
 		close(s);
 		cmdfd = m;
 		signal(SIGCHLD, sigchld);
+		panel_init(cmdfd, pid);
 		break;
 	}
 	return cmdfd;
@@ -2654,6 +2656,7 @@ tresize(int col, int row)
 		tcursor(CURSOR_LOAD);
 	}
 	term.c = c;
+	panel_resize(col, row);
 }
 
 void
@@ -2692,11 +2695,25 @@ draw(void)
 	if (term.line[term.c.y][cx].mode & ATTR_WDUMMY)
 		cx--;
 
+	/* Refresh panel visibility from the PTY's foreground process group and check
+	 * whether the overlay needs repainting. We must read term.dirty BEFORE drawregion()
+	 * clears the flags. */
+	if (panel_poll())
+		tfulldirt();
+	int panel_repaint = panel_needs_draw(term.dirty);
+
 	drawregion(0, 0, term.col, term.row);
 	xdrawcursor(cx, term.c.y, term.line[term.c.y][cx],
 			term.ocx, term.ocy, term.line[term.ocy][term.ocx]);
 	term.ocx = cx;
 	term.ocy = term.c.y;
+
+	/* Panel overlay: painted after terminal content, before XCopyArea in xfinishdraw().
+	 * term.line is never modified, so hiding the panel restores the terminal content
+	 * untouched. */
+	if (panel_repaint)
+		panel_draw();
+
 	xfinishdraw();
 	if (ocx != term.ocx || ocy != term.ocy)
 		xximspot(term.ocx, term.ocy);

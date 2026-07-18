@@ -1,0 +1,7 @@
+# Build artifacts
+config.h
+*.o
+/.build
+
+# Windows DLP sidecar metadata (endpoint DLP)
+*:sec.endpointdlp

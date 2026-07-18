@@ -19,6 +19,7 @@ char *argv0;
 #include "arg.h"
 #include "st.h"
 #include "win.h"
+#include "panel.h"
 
 /* types used in config.h */
 typedef struct {
@@ -59,6 +60,7 @@ static void zoom(const Arg *);
 static void zoomabs(const Arg *);
 static void zoomreset(const Arg *);
 static void ttysend(const Arg *);
+static void togglepanel(const Arg *);
 
 /* config.h for applying patches and the configuration. */
 #include "config.h"
@@ -326,6 +328,15 @@ void
 ttysend(const Arg *arg)
 {
 	ttywrite(arg->s, strlen(arg->s), 1);
+}
+
+void
+togglepanel(const Arg *dummy)
+{
+	(void)dummy;
+	panel_toggle_panel();
+	redraw();	/* mark all rows dirty so the panel repaints (or its previously-covered
+				 * rows get restored on hide). */
 }
 
 int
@@ -1865,6 +1876,13 @@ kpress(XEvent *ev)
 			bp->func(&(bp->arg));
 			return;
 		}
+	}
+
+	/* 1.5. panel consumes keys while visible and interested. returns 0 for keys that
+	 * that should flow to the shell. */
+	if (panel_handle_key((unsigned long)ksym, e->state, buf, len)) {
+		redraw();
+		return;
 	}
 
 	/* 2. custom keys from config.h */
