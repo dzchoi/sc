@@ -21,9 +21,9 @@
 #include <sys/types.h>
 #include <vector>
 
-extern "C" {
-#include "st.h"         // Line, Glyph, Rune, ushort, ATTR_*
-}
+#include "canvas.hpp"
+
+
 
 class Panel {
 public:
@@ -72,6 +72,21 @@ public:
     // that should flow to the shell.
     bool handle_key(unsigned long ksym, unsigned state, const char* buf, int len);
 
+public:  // ??? private?
+    // ----- geometry defaults -----
+    static constexpr int kHeightFrac = 2;   // panel takes 1/kHeightFrac of terminal rows
+    static constexpr int kMinRows    = 12;  // minimum terminal rows to show the panel
+    static constexpr int kWidthFrac  = 2;   // panel takes 1/kWidthFrac of terminal cols
+    static constexpr int kMinCols    = 80;  // minimum terminal cols to show the panel
+
+    // ----- NC-style column layout -----
+    // The row structure inside the frames is:
+    //   | Name | Size | Date | Time |
+    // Fixed-width columns (in cells):
+    static constexpr int kColSize = 7;  // "1234567" / "1234K" / "SUB-DIR"
+    static constexpr int kColDate = 8;  // "MM/DD/YY"
+    static constexpr int kColTime = 6;  // "HH:MM"
+
 private:
     // ----- terminal geometry -----
     // Terminal dimensions. Placeholder values used during static construction;
@@ -86,25 +101,54 @@ private:
     inline static bool typed_since_prompt_ = false;  // true while the shell command line is non-empty.
 
     // ----- panel geometry -----
-    // Panel dimensions/position, derived from term_cols_/term_rows_ in
-    // recompute_geometry().
-    int height_ = 0, width_ = 0, left_ = 0;
+    Canvas canvas_;  // recompute_geometry() only resets its size.
 
     // ----- panel state -----
     bool visible_ = false;
-    bool dirty_   = false;  // true ==> render() must rebuild linebuf_ before next draw.
+    // true ==> render() must rebuild canvas_'s buffer before next draw.
+    bool dirty_   = false;
 
     // ----- data -----
     std::string cwd_;             // the current working directory
     std::vector<Entry> entries_;  // cache of the entries in cwd_
-    std::vector<Glyph> linebuf_;  // height_ * term_cols_ glyphs
-    int selected_ = 0;            // highlighted entry index in entries_
-    int viewport_ = 0;            // index of the first visible entry in entries_
+    int cursor_idx_ = 0;          // index into entries_ of the highlighted row
+    int scroll_idx_ = 0;          // index into entries_ of the first visible row
 
     // ----- queries (internal) -----
-    bool visible() const { return visible_ && height_ > 0 && width_ > 0; }
+    bool visible() const {
+        return visible_ && canvas_.width() > 0 && canvas_.height() > 0;
+    }
 
     // ----- geometry helpers -----
+    // Column X positions inside the panel (panel-local, 0 .. width-1).
+    // Row layout:  | Name... | Size | Date | Time |
+    struct Cols {
+        static constexpr int name_x = 1;  // just after left frame
+        int name_w;
+        int sep1_x;                       // | between Name and Size
+        int size_x;
+        static constexpr int size_w = kColSize;
+        int sep2_x;                       // | between Size and Date
+        int date_x;
+        static constexpr int date_w = kColDate;
+        int sep3_x;                       // | between Date and Time
+        int time_x;
+        static constexpr int time_w = kColTime;
+    } C_;
+
+    // Compute column X positions given the panel width. Assumes
+    // width >= kMinCols/kWidthFrac.
+    void compute_cols(int width)
+    {
+        C_.time_x = width - 1 - kColTime;  // just before right frame
+        C_.sep3_x = C_.time_x - 1;
+        C_.date_x = C_.sep3_x - kColDate;
+        C_.sep2_x = C_.date_x - 1;
+        C_.size_x = C_.sep2_x - kColSize;
+        C_.sep1_x = C_.size_x - 1;
+        C_.name_w = std::max(1, C_.sep1_x - C_.name_x);  // shrinks/grows with width
+    }
+
     void recompute_geometry();
 
     // ----- data helpers -----
@@ -112,10 +156,5 @@ private:
     // Returns the shell's cwd via /proc/<shell_pid>/cwd, or an empty string on failure.
     static std::string shell_cwd();
 
-    // ----- rendering primitives (panel-local coords 0..width_-1) -----
-    Glyph* row_ptr(int y) { return linebuf_.data() + y * term_cols_; }
-    void clear_row(int y, uint32_t fg, uint32_t bg);
-    void put_text(int y, int col, std::string_view s, int max_len,
-                  uint32_t fg, uint32_t bg, ushort mode = ATTR_NULL);
     void render();
 };

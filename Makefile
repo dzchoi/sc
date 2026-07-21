@@ -10,11 +10,12 @@ include config.mk
 BUILDDIR = .build
 BIN		= sc
 SRC_C   = st.c x.c
-SRC_CPP = panel.cpp
+SRC_CPP = panel.cpp canvas.cpp
 OBJ     = $(SRC_C:%.c=$(BUILDDIR)/%.o) $(SRC_CPP:%.cpp=$(BUILDDIR)/%.o)
 
 CC      ?= gcc
 CXX     ?= g++
+CFLAGS  = -O2
 STCXXFLAGS = $(STCFLAGS) -std=c++17 -fno-exceptions -fno-rtti
 
 all: $(BUILDDIR)/$(BIN)
@@ -31,14 +32,16 @@ $(BUILDDIR)/%.o: %.c | $(BUILDDIR)
 $(BUILDDIR)/%.o: %.cpp | $(BUILDDIR)
 	$(CXX) $(STCXXFLAGS) -c $< -o $@
 
-$(BUILDDIR)/st.o:    config.h st.h win.h panel.h
-$(BUILDDIR)/x.o:     arg.h config.h st.h win.h panel.h
-$(BUILDDIR)/panel.o: st.h panel.h panel.hpp
+$(BUILDDIR)/canvas.o:  canvas.cpp win.h
+$(BUILDDIR)/st.o:      config.h st.h win.h panel.h
+$(BUILDDIR)/x.o:       arg.h config.h st.h win.h panel.h
+$(BUILDDIR)/panel.o:   canvas.hpp panel.h panel.hpp st.h
 
 $(OBJ): config.h config.mk
 
 $(BUILDDIR)/$(BIN): $(OBJ)
 	$(CXX) -o $@ $(OBJ) $(STLDFLAGS)
+	strip $(BUILDDIR)/$(BIN)
 
 clean:
 	rm -rf $(BUILDDIR) st-$(VERSION).tar.gz
@@ -46,7 +49,7 @@ clean:
 dist: clean
 	mkdir -p st-$(VERSION)
 	cp -R FAQ LEGACY TODO LICENSE Makefile README config.mk\
-		config.def.h st.info st.1 arg.h st.h win.h panel.h panel.hpp\
+		config.def.h st.info st.1 arg.h st.h win.h panel.h panel.hpp canvas.hpp\
 		$(SRC_C) $(SRC_CPP)\
 		st-$(VERSION)
 	tar -cf - st-$(VERSION) | gzip > st-$(VERSION).tar.gz
