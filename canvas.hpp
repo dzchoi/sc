@@ -19,10 +19,10 @@ class Canvas;
 class Draw {
 public:
     Draw(Canvas& canvas);
-    // Draw(const Draw&) =delete;
-    // Draw& operator=(const Draw&) =delete;
-    // Draw(Draw&&) =default;
-    // Draw& operator=(Draw&&) =default;
+    Draw(const Draw&) =delete;
+    Draw& operator=(const Draw&) =delete;
+    Draw(Draw&&) =default;
+    Draw& operator=(Draw&&) =default;
 
     Draw& move(int x) { x_ = x; return *this; }
     Draw& move(int x, int y) { x_ = x; y_ = y; return *this; }
@@ -43,6 +43,16 @@ public:
 
     // Fill the whole field with a repeated glyph.
     Draw& fill(Rune u, ushort mode = ATTR_NULL);
+
+    // Change the color temporarily. E.g. draw.with_fg(3, [](Draw& d){ d.put("..."); })
+    template <typename F>
+    Draw& with_fg(uint32_t fg, F&& body) {
+        uint32_t saved = fg_;
+        fg_ = fg;
+        std::forward<F>(body)(*this);
+        fg_ = saved;
+        return *this;
+    }
 
 private:
     Canvas& canvas_;
@@ -78,7 +88,7 @@ public:
     int width()  const { return width_; }
     int height() const { return height_; }
 
-    Draw draw() { return std::move(Draw(*this)); }
+    Draw draw() { return Draw(*this); }
 
     // Present every row via xdrawline(). No-op if width_/height_ are 0.
     // Todo: Make present()/row_ptr() const.
