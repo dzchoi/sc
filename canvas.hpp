@@ -11,8 +11,8 @@ extern "C" {
 
 
 
-// Additional ATTR: Paint also the uncovered text in a left/right-aligned field.
-constexpr ushort ATTR_FILL_UNCOVERED = ATTR_WDUMMY << 1;
+// Additional ATTR: Clears the entire region of a left/right/mid-aligned field.
+constexpr ushort ATTR_CLEAR_FIELD = ATTR_WDUMMY << 1;
 
 class Canvas;
 
@@ -24,27 +24,30 @@ public:
     Draw(Draw&&) =default;
     Draw& operator=(Draw&&) =default;
 
+    // Moves cursor.
     Draw& move(int x) { x_ = x; return *this; }
     Draw& move(int x, int y) { x_ = x; y_ = y; return *this; }
 
     Draw& color(uint32_t fg) { fg_ = fg; return *this; }
     Draw& color(uint32_t fg, uint32_t bg) { fg_ = fg; bg_ = bg; return *this; }
 
-    Draw& left(int lfield) { right_aligned_ = false; lfield_ = lfield; return *this; }
-    Draw& right(int lfield) { right_aligned_ = true; lfield_ = lfield; return *this; }
-    // ??? mid()
+    // Sets up a field of `span` cells starting at the current cursor (x_) and configures
+    // text alignment within the field.
+    Draw& left(int span) { align_ = Align::Left; span_ = span; return *this; }
+    Draw& right(int span) { align_ = Align::Right; span_ = span; return *this; }
+    Draw& mid(int span) { align_ = Align::Mid; span_ = span; return *this; }
 
-    // Single glyph at (x_, y_).
+    // Puts a single glyph at (x_, y_).
     Draw& put(Rune u, ushort mode = ATTR_NULL);
 
-    // UTF-8 text from (x_, y_) within lfield cells; after write, cursor is moved and
-    // lfield is cleared.
+    // Puts a UTF-8 text at (x_, y_) in a field (`span_` cells wide); then advances
+    // cursor and clears `span_`.
     Draw& put(std::string_view s, ushort mode = ATTR_NULL);
 
-    // Fill the whole field with a repeated glyph.
+    // Fills the whole field with a repeated glyph.
     Draw& fill(Rune u, ushort mode = ATTR_NULL);
 
-    // Change the color temporarily. E.g. draw.with_fg(3, [](Draw& d){ d.put("..."); })
+    // Changes the color temporarily. E.g. draw.with_fg(3, [](Draw& d){ d.put("..."); })
     template <typename F>
     Draw& with_fg(uint32_t fg, F&& body) {
         uint32_t saved = fg_;
@@ -55,11 +58,13 @@ public:
     }
 
 private:
+    enum class Align { Left, Right, Mid };
+
     Canvas& canvas_;
-    int x_ = 0, y_ = 0;           // cursor within the panel
+    int x_ = 0, y_ = 0;  // cursor within the panel
     uint32_t fg_ = 0, bg_ = 0;
-    bool right_aligned_ = false;
-    int lfield_;                  // field length
+    Align align_ = Align::Left;
+    int span_;  // field width
 };
 
 // Canvas: A rectangular drawing surface positioned within the terminal grid.
@@ -90,7 +95,7 @@ public:
 
     Draw draw() { return Draw(*this); }
 
-    // Present every row via xdrawline(). No-op if width_/height_ are 0.
+    // Presents every row via xdrawline(). No-op if width_/height_ are 0.
     // Todo: Make present()/row_ptr() const.
     void present();
 

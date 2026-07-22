@@ -65,7 +65,7 @@ public:
 
     // ----- User input -----
 
-    // User hit Ctrl+O (Todo: toggle panel on/off).
+    // User hit Ctrl+O.
     void toggle_panel();
 
     // Route a key press. Returns true if the panel consumed it. Returns false for keys
@@ -82,9 +82,13 @@ private:
 
     // ----- NC-style column layout -----
     // The row structure inside the frames is:  | Name | Size | Date | Time |
-    static constexpr int kColSize = 7;  // "1234567" / "1234K" / "SUB-DIR"
+    static constexpr int kColSize = 7;  // "1048576" / "1023.9M" / "SUB-DIR"
     static constexpr int kColDate = 8;  // "MM/DD/YY"
     static constexpr int kColTime = 6;  // "HH:MMp"
+
+    // Required by format_size() (panel.cpp).
+    // 7 = max(digits(1024*1024) == 7, digits(1023) + strlen(".9M") == 7)
+    static_assert(kColSize >= 7);
 
     // ----- terminal geometry -----
     // Terminal dimensions. Placeholder values used during static construction;
@@ -103,8 +107,8 @@ private:
 
     // ----- panel state -----
     bool visible_ = false;
-    // true ==> render() must rebuild canvas_'s buffer before next draw.
-    bool dirty_   = false;
+    bool hidden_ = false;  // true: force-hidden regardless of visible_
+    bool dirty_ = false;   // true: render() rebuilds canvas_'s buffer before next draw.
 
     // ----- data -----
     std::string cwd_;             // the current working directory
@@ -114,7 +118,7 @@ private:
 
     // ----- queries (internal) -----
     bool visible() const {
-        return visible_ && canvas_.width() > 0 && canvas_.height() > 0;
+        return visible_ && !hidden_ && canvas_.width() > 0 && canvas_.height() > 0;
     }
 
     // ----- geometry helpers -----

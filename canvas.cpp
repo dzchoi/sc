@@ -46,7 +46,7 @@ int utf8_next(const unsigned char* p, const unsigned char* pend, Rune* out)
 
 
 Draw::Draw(Canvas& canvas)
-: canvas_(canvas), lfield_(canvas_.width_)
+: canvas_(canvas), span_(canvas_.width_)
 {}
 
 Draw& Draw::put(Rune u, ushort mode)
@@ -59,12 +59,12 @@ Draw& Draw::put(Rune u, ushort mode)
 Draw& Draw::fill(Rune u, ushort mode)
 {
     assert(y_ >= 0 && y_ < canvas_.height_);
-    const int xend = std::min(x_ + lfield_, canvas_.width_);
+    const int xend = std::min(x_ + span_, canvas_.width_);
     while (x_ < xend)
         canvas_.row_ptr(y_)[canvas_.left_ + x_++] = Glyph{u, mode, fg_, bg_};
 
-    lfield_ = canvas_.width_;
-    // Note: right_aligned_ is not cleared.
+    span_ = canvas_.width_;
+    // Note: align_ is not cleared.
     return *this;
 }
 
@@ -72,67 +72,65 @@ Draw& Draw::put(std::string_view s, ushort mode)
 {
     assert(y_ >= 0 && y_ < canvas_.height_);
 
-    const int xend = std::min(x_ + lfield_, canvas_.width_);
-    const unsigned char* p = reinterpret_cast<const unsigned char*>(s.data());
-    const unsigned char* pend = p + s.size();
-
-    if (!right_aligned_) {  // left-aligned
-        while (p < pend && x_ < xend) {
-            Rune u;
-            int n = utf8_next(p, pend, &u);
-            p += n;
-            canvas_.row_ptr(y_)[canvas_.left_ + x_++] = Glyph{u, mode, fg_, bg_};
-        }
-
-        // If mode is ATTR_FILL_UNCOVERED, redraw the uncovered text.
-        if ((mode & ATTR_FILL_UNCOVERED) != 0) {
-            while (x_ < xend) {
+    // Fast-forward x_ to to_x, clearing cells with ' ' along the way if ATTR_CLEAR_FIELD
+    // is set in the mode.
+    auto skip_or_fill = [&](int to_x) {
+        if ((mode & ATTR_CLEAR_FIELD) != 0)
+            while (x_ < to_x) {
                 Glyph& g = canvas_.row_ptr(y_)[canvas_.left_ + x_++];
+                g.u = ' ';
                 g.mode = mode;
                 g.fg = fg_;
                 g.bg = bg_;
             }
-        }
         else
-            x_ = xend;
+            x_ = to_x;
+    };
+
+    const int xend = std::min(x_ + span_, canvas_.width_);
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(s.data());
+    const unsigned char* pend = p + s.size();
+
+    if (align_ == Align::Left) {
+        // Left-aligned text can be streamed glyph-by-glyph; we never need to know its
+        // total width up front, since overflow is simply cut off at xend.
+        while (p < pend && x_ < xend) {
+            Rune u;
+            p += utf8_next(p, pend, &u);
+            canvas_.row_ptr(y_)[canvas_.left_ + x_++] = Glyph{u, mode, fg_, bg_};
+        }
+
+        skip_or_fill(xend);  // right-hand blanks, if the text didn't fill the field.
     }
 
-    else {  // right-aligned
-        std::vector<Glyph> buf;  // unlimited buffer
-        buf.reserve(lfield_);
-
+    else {
+        // right- or mid-aligned: decode fully first to learn the text's width, since
+        // that determines where within the field it starts.
+        std::vector<Glyph> buf;
+        buf.reserve(span_);
         while (p < pend) {
             Rune u;
-            int n = utf8_next(p, pend, &u);
-            p += n;
+            p += utf8_next(p, pend, &u);
             buf.push_back(Glyph{u, mode, fg_, bg_});
         }
 
-        const int uncovered = xend - x_ - buf.size();
-        // int i = 0;
-        auto q = buf.cbegin();
-        if (uncovered > 0) {
-            if ((mode & ATTR_FILL_UNCOVERED) != 0)
-                while (x_ < xend - buf.size()) {
-                    Glyph& g = canvas_.row_ptr(y_)[canvas_.left_ + x_++];
-                    g.mode = mode;
-                    g.fg = fg_;
-                    g.bg = bg_;
-                }
-            else
-                x_ += uncovered;
-        }
+        int slack = xend - x_ - static_cast<int>(buf.size());
+        if (align_ == Align::Mid) slack /= 2;
+        int skip = 0;  // codepoints dropped from the front when the text overflows.
+        if (slack > 0)
+            skip_or_fill(x_ + slack);  // leading blanks for right- or mid-aligned text
         else
-            q += -uncovered;
+            skip = -slack;
 
-        while ( q < buf.cend() )
-            canvas_.row_ptr(y_)[canvas_.left_ + x_++] = *q++;
-        // We will have x_ == xend here.
+        for (auto it = buf.cbegin() + skip; it != buf.cend() && x_ < xend; ++it)
+            canvas_.row_ptr(y_)[canvas_.left_ + x_++] = *it;
+
+        skip_or_fill(xend);  // trailing blanks for mid-aligned text
     }
 
     // Reset the alignment.
-    right_aligned_ = false;
-    lfield_ = canvas_.width_;
+    align_ = Align::Left;
+    span_ = canvas_.width_;
     return *this;
 }
 
