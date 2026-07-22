@@ -16,6 +16,7 @@
 #include <ctime>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <dirent.h>
@@ -57,11 +58,6 @@ namespace {
 // 13: bright magenta
 // 14: bright cyan
 // 15: bright white
-// constexpr uint32_t kBg      = 4;   // blue
-// constexpr uint32_t kFg      = 15;  // bright white
-// constexpr uint32_t kSelBg   = 6;   // cyan
-// constexpr uint32_t kSelFg   = 0;   // black
-// constexpr uint32_t kFrameFg = 14;  // bright cyan
 constexpr uint32_t kFg      = 7;
 constexpr uint32_t kBg      = 4;
 constexpr uint32_t kSelFg   = 3;
@@ -107,7 +103,7 @@ inline void type_to_pty(std::string_view s)
     ttywrite(s.data(), s.size(), 1);
 }
 
-// Human-readable size, fits in C_.size_w cells (right-aligned when printed).
+// Human-readable size, fits in column.size_w cells (right-aligned when printed).
 std::string format_size(off_t bytes)
 {
     std::string s;
@@ -124,22 +120,22 @@ std::string format_size(off_t bytes)
     return s;
 }
 
-// Format modtime as "MM/DD/YY" (kColDate wide) and "HH:MM" (kColTime wide). Empty on
-// failure (mtime==0 or gmtime error).
-struct DateTime {
-    char date[Panel::kColDate + 1];
-    char time[Panel::kColTime + 1];
-};
-DateTime format_mtime(time_t t)
+// Format mtime as {date="MM/DD/YY", time="HH:MM" + am/pm suffix}. Both empty on
+// failure (mtime <= 0 or localtime_r() error).
+std::pair<std::string, std::string> format_mtime(time_t t)
 {
-    DateTime out{};  // zeros .date[] and .time[].
-    if (t <= 0) return out;
+    if (t <= 0) return {};
     struct tm tm_val{};
-    if (!::localtime_r(&t, &tm_val)) return out;
-    std::strftime(out.date, sizeof(out.date), "%-m/%d/%y", &tm_val);
-    std::strftime(out.time, sizeof(out.time), "%-I:%M", &tm_val);
-    std::strcat(out.time, tm_val.tm_hour < 12 ? "a" : "p");
-    return out;
+    if (!::localtime_r(&t, &tm_val)) return {};
+
+    std::string date, time;
+    date.resize(8);  // e.g. "12/31/99"
+    time.resize(6);  // e.g. "12:59p"
+    date.resize(std::strftime(date.data(), date.size(), "%-m/%d/%y", &tm_val));
+    time.resize(std::strftime(time.data(), time.size(), "%-I:%M", &tm_val));
+    if (time.size() > 0)
+        time.push_back(tm_val.tm_hour < 12 ? 'a' : 'p');
+    return {date, time};
 }
 
 } // namespace
@@ -164,7 +160,7 @@ void Panel::recompute_geometry()
     const int width = term_cols_ / kWidthFrac;    // half the terminal
     const int height = term_rows_ / kHeightFrac;  // half the terminal
     const int left = term_cols_ - width;          // top-right placement
-    assert(height >= 6);  // header (2) + one entry (1) + footer (3)
+    assert(height >= kFrameRows + 1);  // header (2) + one entry (1) + footer (3)
     compute_cols(width);
 
     canvas_.reset(top, left, width, height, term_cols_);
@@ -254,33 +250,33 @@ void Panel::render()
     if (!dirty_) return;
     dirty_ = false;
 
-    const int list_rows = height - 5;  // excludes header and footer.
+    const int list_rows = height - kFrameRows;  // excludes header and footer.
     const uint32_t fg = kFg;
     const uint32_t bg = kBg;
 
     // Fill background across panel columns.
-    auto draw = canvas_.draw().color(fg, bg);
+    auto draw = std::move(canvas_.draw().color(fg, bg));
 
     // --- Row 0: top frame + title ---
     draw.move(0, 0).color(kFrameFg).fill(kFrameH)
         .move(0).put(kFrameTL)
-        .move(C_.sep1_x).put(kFrameTT)
-        .move(C_.sep2_x).put(kFrameTT)
-        .move(C_.sep3_x).put(kFrameTT)
+        .move(column.size_x - 1).put(kFrameTT)
+        .move(column.date_x - 1).put(kFrameTT)
+        .move(column.time_x - 1).put(kFrameTT)
         .move(width - 1).put(kFrameTR)
         .move(1).left(width - 2).put(cwd_, ATTR_REVERSE);
 
     // --- Row 1: column headers ---
     draw.move(0, 1).color(fg, bg).fill(' ')
         .move(0).color(kFrameFg).put(kFrameV)
-        .color(3).left(C_.name_w).put("Name", ATTR_BOLD)  // in yellow
-        .color(kFrameFg).put(kFrameV)
-        .color(3).right(C_.size_w).put("Size", ATTR_BOLD)
-        .color(kFrameFg).put(kFrameV)
-        .color(3).left(C_.date_w).put("Date", ATTR_BOLD)
-        .color(kFrameFg).put(kFrameV)
-        .color(3).left(C_.time_w).put("Time", ATTR_BOLD)
-        .color(kFrameFg).put(kFrameV);
+        .left(column.name_w) .with_fg(3, [](Draw& d){ d.put("Name", ATTR_BOLD); })
+        .put(kFrameV)
+        .right(column.size_w).with_fg(3, [](Draw& d){ d.put("Size", ATTR_BOLD); })
+        .put(kFrameV)
+        .left(column.date_w) .with_fg(3, [](Draw& d){ d.put("Date", ATTR_BOLD); })
+        .put(kFrameV)
+        .left(column.time_w) .with_fg(3, [](Draw& d){ d.put("Time", ATTR_BOLD); })
+        .put(kFrameV);
 
     // Keep cursor in view.
     if (cursor_idx_ < scroll_idx_)
@@ -303,27 +299,27 @@ void Panel::render()
 
         if (idx < 0 || idx >= static_cast<int>(entries_.size())) {
             draw.move(0).color(kFrameFg).put(kFrameV)
-                .move(C_.sep1_x).put(kFrameV)
-                .move(C_.sep2_x).put(kFrameV)
-                .move(C_.sep3_x).put(kFrameV)
+                .move(column.size_x - 1).put(kFrameV)
+                .move(column.date_x - 1).put(kFrameV)
+                .move(column.time_x - 1).put(kFrameV)
                 .move(width - 1).put(kFrameV);
             continue;
         }
 
         const Entry& e = entries_[idx];
-        DateTime dt = format_mtime(e.mtime);
+        auto [date, time] = format_mtime(e.mtime);
 
         // Draw row frame.
         draw.move(0).color(kFrameFg).put(kFrameV)
 
             // Name column (left-aligned; truncated to fit)
-            .color(fg).left(C_.name_w).put(
+            .color(fg).left(column.name_w).put(
                 e.name + (e.is_dir ? "/" : "")
                 , mode)
             .color(ffg).put(kFrameV, mode)
 
             // Size column (right-aligned)
-            .color(fg).right(C_.size_w).put(
+            .color(fg).right(column.size_w).put(
                 e.is_dir
                 ? (e.name == "..") ? "UP--DIR" : "SUB-DIR"
                 : format_size(e.size)
@@ -331,45 +327,45 @@ void Panel::render()
             .color(ffg).put(kFrameV, mode)
 
             // Date column
-            .color(fg).right(C_.date_w).put(dt.date, mode)
+            .color(fg).right(column.date_w).put(date, mode)
             .color(ffg).put(kFrameV, mode)
 
             // Time column
-            .color(fg).right(C_.time_w).put(dt.time, mode)
+            .color(fg).right(column.time_w).put(time, mode)
             .color(kFrameFg).put(kFrameV);
     }
 
     // Row -3: separator frame
     draw.move(0, height - 3).color(kFrameFg, bg).fill(kFrameH)
         .move(0).put(kFrameLT)
-        .move(C_.sep1_x).put(kFrameBT)
-        .move(C_.sep2_x).put(kFrameBT)
-        .move(C_.sep3_x).put(kFrameBT)
+        .move(column.size_x - 1).put(kFrameBT)
+        .move(column.date_x - 1).put(kFrameBT)
+        .move(column.time_x - 1).put(kFrameBT)
         .move(width - 1).put(kFrameRT);
 
     // Row -2: selected entry
     const Entry& e = entries_[cursor_idx_];
-    DateTime dt = format_mtime(e.mtime);
+    auto [date, time] = format_mtime(e.mtime);
     draw.move(0, height - 2).color(fg, bg).fill(' ')
         .move(0).color(kFrameFg).put(kFrameV).color(fg)
 
         // Name column (left-aligned; truncated to fit)
-        .left(C_.name_w).put(e.name + (e.is_dir ? "/" : ""))
+        .left(column.name_w).put(e.name + (e.is_dir ? "/" : ""))
 
         // Size column (right-aligned)
-        .move(C_.size_x)
-        .right(C_.size_w).put(
+        .move(column.size_x)
+        .right(column.size_w).put(
             e.is_dir
             ? (e.name == "..") ? "UP--DIR" : "SUB-DIR"
             : format_size(e.size))
 
         // Date column
-        .move(C_.date_x)
-        .right(C_.date_w).put(dt.date)
+        .move(column.date_x)
+        .right(column.date_w).put(date)
 
         // Time column
-        .move(C_.time_x)
-        .right(C_.time_w).put(dt.time)
+        .move(column.time_x)
+        .right(column.time_w).put(time)
         .color(kFrameFg).put(kFrameV);
 
     // Row -1: bottom frame
@@ -390,7 +386,6 @@ Panel::Panel()
     // Cannot use shell_now() instead of getcwd() now until init() is called.
     cwd_ = ::getcwd(buf, sizeof(buf)) ? buf : "/";
     recompute_geometry();
-    load_entries();
 }
 
 void Panel::resize(int cols, int rows)
@@ -469,7 +464,7 @@ void Panel::toggle_panel()
 bool Panel::handle_key(unsigned long ksym, unsigned /*state*/, const char* buf, int len)
 {
     if (!visible()) return false;
-    const int list_rows = std::max(1, canvas_.height() - 5);  // header (2) + footer (3)
+    const int list_rows = canvas_.height() - kFrameRows;
     const int n = static_cast<int>(entries_.size());
 
     // Note: Switch only expects non-printable keys.

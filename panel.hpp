@@ -72,22 +72,20 @@ public:
     // that should flow to the shell.
     bool handle_key(unsigned long ksym, unsigned state, const char* buf, int len);
 
-public:  // ??? private?
+private:
     // ----- geometry defaults -----
     static constexpr int kHeightFrac = 2;   // panel takes 1/kHeightFrac of terminal rows
     static constexpr int kMinRows    = 12;  // minimum terminal rows to show the panel
     static constexpr int kWidthFrac  = 2;   // panel takes 1/kWidthFrac of terminal cols
     static constexpr int kMinCols    = 80;  // minimum terminal cols to show the panel
+    static constexpr int kFrameRows  = 5;   // header (2) + footer (3)
 
     // ----- NC-style column layout -----
-    // The row structure inside the frames is:
-    //   | Name | Size | Date | Time |
-    // Fixed-width columns (in cells):
+    // The row structure inside the frames is:  | Name | Size | Date | Time |
     static constexpr int kColSize = 7;  // "1234567" / "1234K" / "SUB-DIR"
     static constexpr int kColDate = 8;  // "MM/DD/YY"
-    static constexpr int kColTime = 6;  // "HH:MM"
+    static constexpr int kColTime = 6;  // "HH:MMp"
 
-private:
     // ----- terminal geometry -----
     // Terminal dimensions. Placeholder values used during static construction;
     // `st` calls resize() from tresize() before the first frame is rendered.
@@ -125,28 +123,22 @@ private:
     struct Cols {
         static constexpr int name_x = 1;  // just after left frame
         int name_w;
-        int sep1_x;                       // | between Name and Size
         int size_x;
         static constexpr int size_w = kColSize;
-        int sep2_x;                       // | between Size and Date
         int date_x;
         static constexpr int date_w = kColDate;
-        int sep3_x;                       // | between Date and Time
         int time_x;
         static constexpr int time_w = kColTime;
-    } C_;
+    } column;
 
     // Compute column X positions given the panel width. Assumes
     // width >= kMinCols/kWidthFrac.
     void compute_cols(int width)
     {
-        C_.time_x = width - 1 - kColTime;  // just before right frame
-        C_.sep3_x = C_.time_x - 1;
-        C_.date_x = C_.sep3_x - kColDate;
-        C_.sep2_x = C_.date_x - 1;
-        C_.size_x = C_.sep2_x - kColSize;
-        C_.sep1_x = C_.size_x - 1;
-        C_.name_w = std::max(1, C_.sep1_x - C_.name_x);  // shrinks/grows with width
+        column.time_x = width - 1 - kColTime;  // just before right frame
+        column.date_x = column.time_x - 1 - kColDate;
+        column.size_x = column.date_x - 1 - kColSize;
+        column.name_w = column.size_x - 1 - column.name_x;  // shrinks/grows with width
     }
 
     void recompute_geometry();
