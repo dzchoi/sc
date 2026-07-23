@@ -329,8 +329,8 @@ void Panel::render()
         draw.move(0, y)
             .color(kFrameFg, bg).put(kFrameV).color(fg)
 
-            // Name column (left-aligned; truncated to fit)
-            .left(column.name_w).put(
+            // Name column (abbreviated to fit or left-aligned)
+            .abbr(column.name_w).put(
                 e.name + (e.is_dir ? "/" : "")
                 , mode)
             .with_fg(ffg, [&](Draw& d){ d.put(kFrameV, mode); })
@@ -366,8 +366,8 @@ void Panel::render()
     draw.move(0, height - 2).color(fg, bg).fill(' ')
         .move(0).with_fg(kFrameFg, [](Draw& d){ d.put(kFrameV); })
 
-        // Name column (left-aligned; truncated to fit)
-        .left(column.name_w).put(e.name + (e.is_dir ? "/" : ""))
+        // Name column (abbreviated to fit or left-aligned)
+        .abbr(column.name_w).put(e.name + (e.is_dir ? "/" : ""))
 
         // Size column (right-aligned)
         .move(column.size_x)

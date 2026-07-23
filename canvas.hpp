@@ -37,6 +37,14 @@ public:
     Draw& right(int span) { align_ = Align::Right; span_ = span; return *this; }
     Draw& mid(int span) { align_ = Align::Mid; span_ = span; return *this; }
 
+    // Like left(), but text that overflows the field is abbreviated with a mid-string
+    // ellipsis ('…' U+2026) instead of being hard-truncated at the right edge. If the
+    // text has a short extension (<= kMaxExtLen chars after the last '.', ignoring a
+    // leading dot as in ".bashrc"), the extension is kept visible (without its dot)
+    // right after the ellipsis; otherwise the ellipsis simply replaces the trailing part
+    // of the text.
+    Draw& abbr(int span) { align_ = Align::Abbr; span_ = span; return *this; }
+
     // Puts a single glyph at (x_, y_).
     Draw& put(Rune u, ushort mode = ATTR_NULL);
 
@@ -58,7 +66,13 @@ public:
     }
 
 private:
-    enum class Align { Left, Right, Mid };
+    enum class Align { Left, Right, Mid, Abbr };
+
+    // Handles Align::Abbr abbreviation for text that overflows the `xend`-cell boundary,
+    // writing glyphs and advancing x_ as it goes. Returns false without writing
+    // anything if the text already fits the field - the caller should fall back to
+    // normal left-aligned streaming in that case.
+    bool put_ellipsized(std::string_view s, int xend, ushort mode);
 
     Canvas& canvas_;
     int x_ = 0, y_ = 0;  // cursor within the panel
@@ -112,4 +126,7 @@ private:
 
     // Raw pointer to row y, for handing to xdrawline(row_ptr(y), left(), y, right()).
     static Glyph* row_ptr(int y) { return linebuf_.data() + y * term_cols_; }
+
+    // Reference to the glyph at surface-local (x, y), i.e. row_ptr(y)[left_ + x].
+    Glyph& cell(int y, int x) { return row_ptr(y)[left_ + x]; }
 };
