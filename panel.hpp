@@ -23,6 +23,8 @@
 
 #include "canvas.hpp"
 
+struct stat;
+
 
 
 class Panel {
@@ -148,7 +150,11 @@ private:
     void recompute_geometry();
 
     // ----- data helpers -----
-    void load_entries();
+    // Rebuilds entries_[] from cwd_. pst is the previous directory's stat, used to
+    // re-locate that directory among the new entries (e.g. ".." after descending, or
+    // the subdir just left after ascending) and re-seat cursor_idx_ on it.
+    void load_entries(const struct stat& pst);
+
     // Returns the shell's cwd via /proc/<shell_pid>/cwd, or an empty string on failure.
     static std::string shell_cwd();
 
