@@ -9,7 +9,6 @@
 
 #include <algorithm>
 #include <cassert>
-#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -505,37 +504,36 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char* buf, int 
     switch (ksym) {
         case XK_Up:
             --cursor_idx_;
-            goto clamp_selected;
+            goto clamp_cursor;
         case XK_Down:
             ++cursor_idx_;
-            goto clamp_selected;
+            goto clamp_cursor;
         case XK_Home:
             cursor_idx_ = 0;
             goto mark_dirty;
         case XK_End:
             cursor_idx_ = n - 1;
-            goto clamp_selected;
+            goto clamp_cursor;
 
         case XK_Page_Up:
             if ((state & ControlMask) == 0) {
                 cursor_idx_ -= list_rows;
-                goto clamp_selected;
+                goto clamp_cursor;
             }
-            // Using " cd" doesn't save it in the shell history.
-            type_to_pty(" cd " + shell_quote(cwd_ + "/..") + "\n");
+            type_to_pty("cd " + shell_quote(cwd_ + "/..") + "\n");
             return true;
         case XK_Page_Down:
             if ((state & ControlMask) == 0) {
                 cursor_idx_ += list_rows;
-                goto clamp_selected;
+                goto clamp_cursor;
             }
             if (entries_[cursor_idx_].is_dir) {
                 const Entry& e = entries_[cursor_idx_];
-                type_to_pty(" cd " + shell_quote(cwd_ + "/" + e.name) + "\n");
+                type_to_pty("cd " + shell_quote(cwd_ + "/" + e.name) + "\n");
             }
             return true;
 
-        clamp_selected:
+        clamp_cursor:
             cursor_idx_ = clamp_between(cursor_idx_, 0, std::max(0, n - 1));
         mark_dirty:
             dirty_ = true;
@@ -555,8 +553,8 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char* buf, int 
             if (e.is_dir) {
                 // We could change cwd now to update the panel quickly.
                 // set_cwd(cwd_ + "/" + e.name);
-                // type_to_pty(" cd " + shell_quote(cwd_) + "\n");
-                type_to_pty(" cd " + shell_quote(cwd_ + "/" + e.name) + "\n");
+                // type_to_pty("cd " + shell_quote(cwd_) + "\n");
+                type_to_pty("cd " + shell_quote(cwd_ + "/" + e.name) + "\n");
             } else {
                 // Execute the selected file immediately.
                 type_to_pty(shell_quote(cwd_ + "/" + e.name) + "\n");
@@ -569,7 +567,7 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char* buf, int 
         //     return true;
     }
 
-    if (len > 0 && std::isprint(static_cast<unsigned char>(buf[0])))
+    if (len > 0)  // `&& std::isprint(buf[0])` would not work with bash vi mode.
         typed_since_prompt_ = true;
 
     return false;

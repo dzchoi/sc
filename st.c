@@ -830,6 +830,13 @@ ttyread(void)
 	case 0:
 		exit(0);
 	case -1:
+		/* Once the shell exits and its session hangs up the pty, a read that was
+		 * already in flight (or one that races the SIGCHLD handler) can return EIO
+		 * instead of the usual EOF (0). Treat it the same as EOF rather than dying,
+		 * since the shell is simply gone.
+		 */
+		if (errno == EIO)
+			exit(0);
 		die("couldn't read from shell: %s\n", strerror(errno));
 	default:
 		buflen += ret;
