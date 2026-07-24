@@ -26,6 +26,7 @@
 #include <termios.h>
 #include <unistd.h>
 
+#include <X11/X.h>              // ControlMask
 #include <X11/keysym.h>
 
 #include "panel.hpp"
@@ -189,16 +190,20 @@ void Panel::recompute_geometry()
 // Panel: data
 // =========================================================================
 
-void Panel::load_entries()
+void Panel::load_entries(const struct stat& pst)
 {
     entries_.clear();
 
-    // Manually add ".." in case the filesystem's readdir() does not enumerate it.
+    // Manually add ".." as the first entry in case the filesystem's readdir() does not
+    // enumerate it.
     Entry dotdot{"..", true, 0};
     struct stat st{};
+    bool matched = false;
     if (::lstat((cwd_ + "/..").c_str(), &st) == 0) {
         dotdot.size  = st.st_size;
         dotdot.mtime = st.st_mtime;
+        matched = (st.st_dev == pst.st_dev && st.st_ino == pst.st_ino);
+        if (matched) cursor_idx_ = 0;
     }
     entries_.push_back(std::move(dotdot));
 
@@ -209,12 +214,33 @@ void Panel::load_entries()
             Entry e;
             e.name = de->d_name;
             const std::string full = cwd_ + "/" + e.name;
+            struct stat st{};  // zeroed each iteration in case lstat() below fails.
             if (::lstat(full.c_str(), &st) == 0) {
                 e.is_dir = S_ISDIR(st.st_mode);
                 e.size   = st.st_size;
                 e.mtime  = st.st_mtime;
             }
-            entries_.push_back(std::move(e));
+
+            // Insert `e` at its sorted position (".." first, then dirs, then files).
+            auto it = std::lower_bound(entries_.begin(), entries_.end(), e,
+                [](const Entry& a, const Entry& b) {
+                    if (a.name == "..") return true;
+                    if (b.name == "..") return false;
+                    if (a.is_dir != b.is_dir) return a.is_dir;
+                    return a.name < b.name;
+                });
+            const int idx = static_cast<int>(it - entries_.begin());
+            entries_.emplace(it, std::move(e));
+
+            if (matched) {
+                // Any later insertion landing at or before cursor_idx_ shifts
+                // cursor_idx_ one slot to the right.
+                if (idx <= cursor_idx_) ++cursor_idx_;
+            }
+            else {
+                matched = (st.st_dev == pst.st_dev && st.st_ino == pst.st_ino);
+                if (matched) cursor_idx_ = idx;
+            }
         }
 
         ::closedir(d);
@@ -222,17 +248,12 @@ void Panel::load_entries()
     // The case `d == nullptr` can happen when the current directory is deleted or
     // permission-changed while we are still in it.
 
-    // Sort: ".." first, then dirs, then files, each alphabetical.
-    std::sort(entries_.begin(), entries_.end(),
-        [](const Entry& a, const Entry& b) {
-            if (a.name == "..") return true;
-            if (b.name == "..") return false;
-            if (a.is_dir != b.is_dir) return a.is_dir;
-            return a.name < b.name;
-        });
-
-    const int n = static_cast<int>(entries_.size());
-    cursor_idx_ = clamp_between(cursor_idx_, 0, std::max(0, n - 1));
+    // Fall back to the old cursor_idx_ if pst was not found (e.g. after a same-dir
+    // reload, or if the target no longer exists).
+    if (!matched) {
+        const int n = static_cast<int>(entries_.size());
+        cursor_idx_ = clamp_between(cursor_idx_, 0, std::max(0, n - 1));
+    }
     scroll_idx_ = 0;
     dirty_ = true;
 }
@@ -426,30 +447,24 @@ bool Panel::poll()
     if (visible()) {
         // A foreground command just finished -> prompt is fresh again and files may
         // have been modified; force a reload.
-        static std::string last_cwd;
         bool needs_reload = !was;
         if (needs_reload) typed_since_prompt_ = false;
+        struct stat pst{};  // zero-initialized in case lstat() below fails.
 
-        // Detect a shell-initiated cwd change (e.g. user typed `cd` at the prompt)
-        // by watching for a change in the shell's /proc cwd. We compare against
-        // the *previous* shell cwd, not against cwd_, so panel-initiated `cd`s
-        // we've already applied to cwd_ don't get clobbered while the shell is still
-        // catching up. Two cases:
-        //   - shell cwd changed AND differs from cwd_: user cd'd via the shell;
-        //     adopt it.
-        //   - shell cwd changed to match cwd_: shell just caught up to a panel-
-        //     initiated cd; leave cwd_ alone.
-        if (std::string cwd = shell_cwd(); !cwd.empty() && cwd != last_cwd) {
-            if (cwd != cwd_) {
-                cwd_ = cwd;
-                cursor_idx_ = 0;
-                scroll_idx_ = 0;
-                needs_reload = true;
-            }
-            last_cwd = std::move(cwd);
+        // Detect a directory change - whether the user typed `cd` at the prompt, or
+        // the panel itself injected one (Enter on a dir, Ctrl+PgUp/PgDn) - by comparing
+        // the shell's actual cwd (via /proc) against cwd_, our last-recorded value.
+        if (std::string cwd = shell_cwd(); !cwd.empty() && cwd != cwd_) {
+            ::lstat(cwd_.c_str(), &pst);
+            cwd_ = cwd;
+            needs_reload = true;
+            cursor_idx_ = 0;  // Reset cursor on a long jump (e.g. "cd /").
         }
 
-        if (needs_reload) load_entries();
+        // If the shell's cwd changed, pst ends up holding the stat of the dir we're
+        // leaving; load_entries() re-selects it if it turns out to be an entry of the
+        // new directory (see load_entries()'s comment).
+        if (needs_reload) load_entries(pst);
     }
 
     return was != visible();
@@ -479,8 +494,9 @@ void Panel::toggle_panel()
     dirty_ = true;
 }
 
-bool Panel::handle_key(unsigned long ksym, unsigned /*state*/, const char* buf, int len)
+bool Panel::handle_key(unsigned long ksym, unsigned state, const char* buf, int len)
 {
+    assert(cursor_idx_ >= 0);  // entries_[] is never empty (when visible()).
     if (!visible()) return false;
     const int list_rows = canvas_.height() - kFrameRows;
     const int n = static_cast<int>(entries_.size());
@@ -499,26 +515,31 @@ bool Panel::handle_key(unsigned long ksym, unsigned /*state*/, const char* buf, 
         case XK_End:
             cursor_idx_ = n - 1;
             goto clamp_selected;
+
         case XK_Page_Up:
-            cursor_idx_ -= list_rows;
-            goto clamp_selected;
+            if ((state & ControlMask) == 0) {
+                cursor_idx_ -= list_rows;
+                goto clamp_selected;
+            }
+            // Using " cd" doesn't save it in the shell history.
+            type_to_pty(" cd " + shell_quote(cwd_ + "/..") + "\n");
+            return true;
         case XK_Page_Down:
-            cursor_idx_ += list_rows;
-            goto clamp_selected;
+            if ((state & ControlMask) == 0) {
+                cursor_idx_ += list_rows;
+                goto clamp_selected;
+            }
+            if (entries_[cursor_idx_].is_dir) {
+                const Entry& e = entries_[cursor_idx_];
+                type_to_pty(" cd " + shell_quote(cwd_ + "/" + e.name) + "\n");
+            }
+            return true;
 
         clamp_selected:
             cursor_idx_ = clamp_between(cursor_idx_, 0, std::max(0, n - 1));
         mark_dirty:
             dirty_ = true;
             return true;
-
-        // case XK_BackSpace:
-        //     // Consistent with Enter-on-dir: keep the shell in sync so a later command
-        //     // runs in the directory the user is viewing, and so the next `!was` sync
-        //     // in poll() doesn't snap the panel back to the shell's untouched cwd.
-        //     set_cwd(cwd_ + "/..");
-        //     type_to_pty("cd " + shell_quote(cwd_) + "\n");
-        //     return true;
 
         case XK_Return:
         case XK_KP_Enter: {
@@ -534,8 +555,8 @@ bool Panel::handle_key(unsigned long ksym, unsigned /*state*/, const char* buf, 
             if (e.is_dir) {
                 // We could change cwd now to update the panel quickly.
                 // set_cwd(cwd_ + "/" + e.name);
-                // type_to_pty("cd " + shell_quote(cwd_) + "\n");
-                type_to_pty("cd " + shell_quote(cwd_ + "/" + e.name) + "\n");
+                // type_to_pty(" cd " + shell_quote(cwd_) + "\n");
+                type_to_pty(" cd " + shell_quote(cwd_ + "/" + e.name) + "\n");
             } else {
                 // Execute the selected file immediately.
                 type_to_pty(shell_quote(cwd_ + "/" + e.name) + "\n");
