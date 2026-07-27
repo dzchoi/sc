@@ -340,20 +340,21 @@ void Panel::render()
         const bool selected = (idx == cursor_idx_);
         const ushort mode = selected
             ? ATTR_REVERSE | ATTR_CLEAR_FIELD : ATTR_CLEAR_FIELD;
-        const uint32_t ffg = selected ? fg : kFrameFg;
+        const uint32_t fg_text  = (selected && typing_) ? kFrameFg : fg;
+        const uint32_t fg_frame = selected ? fg_text : kFrameFg;
 
         const Entry& e = entries_[idx];
         auto [date, time] = format_mtime(e.mtime);
 
         // Draw row frame.
         draw.move(0, y)
-            .color(kFrameFg, bg).put(kFrameV).color(fg)
+            .color(kFrameFg, bg).put(kFrameV).color(fg_text)
 
             // Name column (abbreviated to fit or left-aligned)
             .abbr(column.name_w).put(
                 e.name + (e.is_dir ? "/" : "")
                 , mode)
-            .with_fg(ffg, [&](Draw& d){ d.put(kFrameV, mode); })
+            .with_fg(fg_frame, [&](Draw& d){ d.put(kFrameV, mode); })
 
             // Size column (right-aligned)
             .right(column.size_w).put(
@@ -361,11 +362,11 @@ void Panel::render()
                 ? (e.name == "..") ? "UP--DIR" : "SUB-DIR"
                 : format_size(e.size)
                 , mode)
-            .with_fg(ffg, [&](Draw& d){ d.put(kFrameV, mode); })
+            .with_fg(fg_frame, [&](Draw& d){ d.put(kFrameV, mode); })
 
             // Date column
             .right(column.date_w).put(date, mode)
-            .with_fg(ffg, [&](Draw& d){ d.put(kFrameV, mode); })
+            .with_fg(fg_frame, [&](Draw& d){ d.put(kFrameV, mode); })
 
             // Time column
             .right(column.time_w).put(time, mode)
@@ -447,7 +448,7 @@ bool Panel::poll()
         // A foreground command just finished -> prompt is fresh again and files may
         // have been modified; force a reload.
         bool needs_reload = !was;
-        if (needs_reload) typed_since_prompt_ = false;
+        if (needs_reload) set_typing(false);
         struct stat pst{};  // zero-initialized in case lstat() below fails.
 
         // Detect a directory change - whether the user typed `cd` at the prompt, or
@@ -541,11 +542,11 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char* buf, int 
 
         case XK_Return:
         case XK_KP_Enter: {
-            if (typed_since_prompt_) {
+            if (typing_) {
                 // Let the shell handle Enter after the user started typing a command.
                 // The input line is about to be submitted, so the prompt is fresh again
                 // immediately - poll() no longer has to guess when to reset this flag.
-                typed_since_prompt_ = false;
+                set_typing(false);
                 return false;
             }
 
@@ -568,7 +569,7 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char* buf, int 
     }
 
     if (len > 0)  // `&& std::isprint(buf[0])` would not work with bash vi mode.
-        typed_since_prompt_ = true;
+        set_typing(true);
 
     return false;
 }
