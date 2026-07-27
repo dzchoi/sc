@@ -340,6 +340,8 @@ void Panel::render()
         const bool selected = (idx == cursor_idx_);
         const ushort mode = selected
             ? ATTR_REVERSE | ATTR_CLEAR_FIELD : ATTR_CLEAR_FIELD;
+        // Selected: frame matches text color (dimmed while typing_).
+        // Unselected: frame stays kFrameFg regardless of typing_.
         const uint32_t fg_text  = (selected && typing_) ? kFrameFg : fg;
         const uint32_t fg_frame = selected ? fg_text : kFrameFg;
 
@@ -448,7 +450,7 @@ bool Panel::poll()
         // A foreground command just finished -> prompt is fresh again and files may
         // have been modified; force a reload.
         bool needs_reload = !was;
-        if (needs_reload) set_typing(false);
+        if (needs_reload) typing_ = false;  // dirty_ is set by load_entries() below.
         struct stat pst{};  // zero-initialized in case lstat() below fails.
 
         // Detect a directory change - whether the user typed `cd` at the prompt, or
@@ -484,8 +486,8 @@ bool Panel::needs_draw(const int* term_dirty) const
 void Panel::draw()
 {
     if (!visible()) return;
-    render();          // no-op if dirty
-    canvas_.present();
+    render();           // no-op unless dirty_
+    canvas_.present();  // re-blits over rows the terminal just redrew underneath us
 }
 
 void Panel::toggle_panel()
@@ -500,6 +502,7 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char* buf, int 
     if (!visible()) return false;
     const int list_rows = canvas_.height() - kFrameRows;
     const int n = static_cast<int>(entries_.size());
+    const int old_cursor_idx = cursor_idx_;
 
     // Note: Switch only expects non-printable keys.
     switch (ksym) {
@@ -511,7 +514,7 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char* buf, int 
             goto clamp_cursor;
         case XK_Home:
             cursor_idx_ = 0;
-            goto mark_dirty;
+            goto clamp_cursor;
         case XK_End:
             cursor_idx_ = n - 1;
             goto clamp_cursor;
@@ -536,19 +539,13 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char* buf, int 
 
         clamp_cursor:
             cursor_idx_ = clamp_between(cursor_idx_, 0, std::max(0, n - 1));
-        mark_dirty:
-            dirty_ = true;
+            dirty_ |= (old_cursor_idx != cursor_idx_);
             return true;
 
         case XK_Return:
         case XK_KP_Enter: {
-            if (typing_) {
-                // Let the shell handle Enter after the user started typing a command.
-                // The input line is about to be submitted, so the prompt is fresh again
-                // immediately - poll() no longer has to guess when to reset this flag.
-                set_typing(false);
-                return false;
-            }
+            if (typing_)
+                break;  // Not ours - falls through to the '\n'/'\r' check below.
 
             const Entry& e = entries_[cursor_idx_];
             if (e.is_dir) {
@@ -568,8 +565,18 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char* buf, int 
         //     return true;
     }
 
-    if (len > 0)  // `&& std::isprint(buf[0])` would not work with bash vi mode.
-        set_typing(true);
+    if (len > 0) {
+        // A '\n'/'\r' (Enter, Ctrl+J, Ctrl+M, ...) submits the command line, so the
+        // prompt is fresh again immediately; any other key starts typing_.
+        const bool typing = (buf[0] != '\n' && buf[0] != '\r');
+        // if (typing_ != typing) {
+        //     typing_ = typing;
+        //     dirty_ = true;
+        // }
+        // Same code as above but branchless
+        dirty_ |= (typing != typing_);
+        typing_ = typing;
+    }
 
     return false;
 }

@@ -102,7 +102,7 @@ private:
     // Set once from init() after the shell is forked; never change thereafter.
     inline static int pty_fd_ = -1;
     inline static pid_t shell_pid_ = 0;
-    inline static bool typing_ = false;  // True while the user is typing a command.
+    inline static bool typing_ = false;  // True while the user is typing command line.
 
     // ----- panel geometry -----
     Canvas canvas_;  // recompute_geometry() only resets its size.
@@ -150,14 +150,6 @@ private:
     void recompute_geometry();
 
     // ----- data helpers -----
-    // Sets typing_ and marks the panel dirty_ if it changes.
-    void set_typing(bool typing) {
-        if (typing_ != typing) {
-            typing_ = typing;
-            dirty_ = true;
-        }
-    }
-
     // Rebuilds entries_[] from cwd_. pst is the previous directory's stat, used to
     // re-locate that directory among the new entries (e.g. ".." after descending, or
     // the subdir just left after ascending) and re-seat cursor_idx_ on it.
