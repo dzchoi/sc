@@ -816,6 +816,7 @@ ttynew(const char *line, char *cmd, const char *out, char **args)
 		cmdfd = m;
 		signal(SIGCHLD, sigchld);
 		panel_init(cmdfd, pid);
+		tmoveto(0, panel_visible_height());
 		break;
 	}
 	return cmdfd;
@@ -950,6 +951,39 @@ ttyresize(int tw, int th)
 	w.ws_ypixel = th;
 	if (ioctl(cmdfd, TIOCSWINSZ, &w) < 0)
 		fprintf(stderr, "Couldn't set window size: %s\n", strerror(errno));
+}
+
+void
+ttykick(void)
+{
+	/* TIOCSWINSZ will be a no-op if the requested size matches what the kernel already
+	 * has stored for this pty - no SIGWINCH is sent. Flap the row count down and back up
+	 * to force two distinct ioctls, so the shell's SIGWINCH handler redraws its current
+	 * line (e.g. after we silently moved the cursor out from under the panel). */
+	struct winsize w;
+	int row;
+
+	ioctl(cmdfd, TIOCGWINSZ, &w);
+	row = w.ws_row;
+	w.ws_row = row > 1 ? row - 1 : row + 1;
+	ioctl(cmdfd, TIOCSWINSZ, &w);
+	w.ws_row = row;
+	ioctl(cmdfd, TIOCSWINSZ, &w);
+}
+
+/* If the panel is covering the cursor row (e.g. a resize just grew the panel, or a
+ * foreground job just exited and homed the cursor to row 0 via `clear`), move it below
+ * the panel. Return 1 if the cursor was moved, 0 otherwise. */
+int
+tpaneluncover(void)
+{
+	int panel_height = panel_visible_height();
+
+	if (term.c.y < panel_height) {
+		tmoveto(term.c.x, panel_height);
+		return 1;
+	}
+	return 0;
 }
 
 void
@@ -2664,6 +2698,10 @@ tresize(int col, int row)
 	}
 	term.c = c;
 	panel_resize(col, row);
+
+	/* If the resize grew the panel over the cursor row, move it below the panel, before
+	 * ttyresize() sends TIOCSWINSZ and triggers a SIGWINCH-driven shell redraw. */
+	tpaneluncover();
 }
 
 void
@@ -2703,11 +2741,13 @@ draw(void)
 		cx--;
 
 	/* Refresh panel visibility from the PTY's foreground process group and check
-	 * whether the overlay needs repainting. We must read term.dirty BEFORE drawregion()
-	 * clears the flags. */
-	if (panel_poll())
+	 * whether the panel overlay needs to be redrawn. Note that panel_poll() only
+	 * reports visibility transitions (hidden <-> visible), rather than every draw. */
+	if (panel_poll()) {
 		tfulldirt();
-	int panel_repaint = panel_needs_draw(term.dirty);
+		tpaneluncover();
+	}
+	int panel_redraw = panel_needs_draw(term.dirty);
 
 	drawregion(0, 0, term.col, term.row);
 	xdrawcursor(cx, term.c.y, term.line[term.c.y][cx],
@@ -2715,10 +2755,10 @@ draw(void)
 	term.ocx = cx;
 	term.ocy = term.c.y;
 
-	/* Panel overlay: painted after terminal content, before XCopyArea in xfinishdraw().
+	/* Panel overlay: drawn after terminal content, before XCopyArea in xfinishdraw().
 	 * term.line is never modified, so hiding the panel restores the terminal content
 	 * untouched. */
-	if (panel_repaint)
+	if (panel_redraw)
 		panel_draw();
 
 	xfinishdraw();

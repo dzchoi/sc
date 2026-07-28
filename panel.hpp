@@ -52,9 +52,9 @@ public:
 
     // ----- Draw lifecycle (call in this order once per frame) -----
 
-    // Refresh auto-visibility from the PTY's foreground process group.
-    // Returns true if visibility just changed and the caller must force all rows dirty
-    // for the terminal underneath to be repainted.
+    // Refresh auto-visibility from the PTY's foreground process group. Returns true if
+    // visibility just changed (caller must force all rows dirty so the terminal content
+    // underneath, or the panel itself, gets repainted).
     bool poll();
 
     // True if the overlay must be repainted this frame: either our content changed, or
@@ -64,6 +64,9 @@ public:
 
     // Paint the panel overlay via xdrawline(). No-op if not visible.
     void draw();
+
+    // The panel's current height if visible, 0 otherwise.
+    int visible_height() const { return visible() ? canvas_.height() : 0; }
 
     // ----- User input -----
 
