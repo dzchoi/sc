@@ -446,11 +446,11 @@ bool Panel::poll()
     assert(pty_fd_ >= 0 && shell_pid_ > 0);  // also asserts that .init() was called.
     const bool was = visible();
     visible_ = (::tcgetpgrp(pty_fd_) == shell_pid_);
-    if (visible()) {
+    const bool now = visible();
+    if (now) {
         // A foreground command just finished -> prompt is fresh again and files may
         // have been modified; force a reload.
         bool needs_reload = !was;
-        if (needs_reload) typing_ = false;  // dirty_ is set by load_entries() below.
         struct stat pst{};  // zero-initialized in case lstat() below fails.
 
         // Detect a directory change - whether the user typed `cd` at the prompt, or
@@ -469,7 +469,7 @@ bool Panel::poll()
         if (needs_reload) load_entries(pst);
     }
 
-    return was != visible();
+    return was != now;
 }
 
 bool Panel::needs_draw(const int* term_dirty) const
@@ -494,6 +494,8 @@ void Panel::toggle_panel()
 {
     hidden_ = !hidden_;
     dirty_ = true;
+	if (tpaneluncover())
+		ttykick();  // force the shell to redraw its prompt at the new row.
 }
 
 bool Panel::handle_key(unsigned long ksym, unsigned state, const char* buf, int len)
@@ -524,14 +526,15 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char* buf, int 
                 cursor_idx_ -= list_rows;
                 goto clamp_cursor;
             }
-            type_to_pty("cd " + shell_quote(cwd_ + "/..") + "\n");
+            if (!typing_)
+                type_to_pty("cd " + shell_quote(cwd_ + "/..") + "\n");
             return true;
         case XK_Page_Down:
             if ((state & ControlMask) == 0) {
                 cursor_idx_ += list_rows;
                 goto clamp_cursor;
             }
-            if (entries_[cursor_idx_].is_dir) {
+            if (!typing_ && entries_[cursor_idx_].is_dir) {
                 const Entry& e = entries_[cursor_idx_];
                 type_to_pty("cd " + shell_quote(cwd_ + "/" + e.name) + "\n");
             }
@@ -556,6 +559,7 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char* buf, int 
             } else {
                 // Execute the selected file immediately.
                 type_to_pty(shell_quote(cwd_ + "/" + e.name) + "\n");
+                visible_ = false;
             }
             return true;
         }
@@ -576,6 +580,10 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char* buf, int 
         // Same code as above but branchless
         dirty_ |= (typing != typing_);
         typing_ = typing;
+
+        // Force poll()'s next sample to see a hidden->visible edge, even if the command
+        // finishes too quickly.
+        if (!typing) visible_ = false;
     }
 
     return false;
@@ -594,9 +602,10 @@ extern "C" {
 void panel_resize(int cols, int rows) { g_panel.resize(cols, rows); }
 void panel_init(int pty_fd, pid_t shell_pid) { g_panel.init(pty_fd, shell_pid); }
 
-int  panel_poll(void) { return g_panel.poll();}
+int  panel_poll(void) { return g_panel.poll(); }
 int  panel_needs_draw(const int* term_dirty) { return g_panel.needs_draw(term_dirty); }
 void panel_draw(void) { g_panel.draw(); }
+int  panel_visible_height(void) { return g_panel.visible_height(); }
 
 void panel_toggle_panel(void) { g_panel.toggle_panel(); }
 

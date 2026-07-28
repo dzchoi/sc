@@ -97,6 +97,9 @@ size_t ttyread(void);
 void ttyresize(int, int);
 void ttywrite(const char *, size_t, int);
 
+int tpaneluncover(void);
+void ttykick(void);
+
 void resettitle(void);
 
 void selclear(void);

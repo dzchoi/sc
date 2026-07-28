@@ -56,7 +56,6 @@ Current implementation uses a simple state switch:
 ### To-do
 
 #### Appearance
-  - Typing under panel hides, though Cursor appears sometimes.
   - No icon
   - Scroll back with mouse wheel
 

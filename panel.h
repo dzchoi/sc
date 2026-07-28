@@ -29,10 +29,9 @@ void panel_init(int pty_fd, pid_t shell_pid);
 
 /* ----- Draw lifecycle: called from draw() each frome in this order ----- */
 
-/* Refresh auto-visibility from the PTY's foreground process group.
- * Returns 1 if visibility just changed and the caller should force all rows dirty (so
- * the terminal content underneath is repainted on hide, or the overlay lands on fresh
- * terminal content on show). */
+/* Refresh auto-visibility from the PTY's foreground process group. Returns 1 if
+ * visibility just changed (caller must force all rows dirty so the terminal content
+ * underneath, or the panel itself, gets repainted), 0 otherwise. */
 int panel_poll(void);
 
 /* Returns 1 if the panel overlay must be redrawn this frame:
@@ -42,6 +41,9 @@ int panel_needs_draw(const int* term_dirty);
 
 /* Paint the panel overlay via xdrawline(). No-op if not visible. */
 void panel_draw(void);
+
+/* The panel's current height if visible, 0 otherwise. */
+int panel_visible_height(void);
 
 /* ----- User input (called from x.c) ----- */
 
