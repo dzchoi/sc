@@ -57,14 +57,25 @@ Current implementation uses a simple state switch:
 
 #### Appearance
   - No icon
-  - Scroll back with mouse wheel
+  - Symlinks
+  - Do not display `cd <dir>` when changing directories from the panel.
+  - Display the expanded value of history expansions (e.g. !!, !^, etc.) inline.
+  - History selection menu.
+
+#### Mouse
+  - Mouse selects text within the panel.
+  - Scroll back with mouse wheel.
 
 #### Keys
   - F3: (colored) `less $0`
   - F4: `vim $0` (not gvim)
+  - F5: fast copy using rsync?
   - diff directories, ...
   - Show memory usage, ...
 
-### Support VFS using fuse-zip
-  - Not only viewing a file in zip, we can execute a file directly from the zip.
+#### Brief list
 
+#### Two panels
+
+#### Support VFS using fuse-zip
+  - Not only viewing a file in zip, we can execute a file directly from the zip.

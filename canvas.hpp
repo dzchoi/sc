@@ -31,19 +31,25 @@ public:
     Draw& color(uint32_t fg) { fg_ = fg; return *this; }
     Draw& color(uint32_t fg, uint32_t bg) { fg_ = fg; bg_ = bg; return *this; }
 
-    // Sets up a field of `span` cells starting at the current cursor (x_) and configures
-    // text alignment within the field.
+    // Sets up a field of `span` cells starting at the current cursor (x_); the text
+    // given to the next put() is positioned left/right/centered within the field if it
+    // fits. If it doesn't fit and ellipsize() wasn't also called, it's hard-cut - from
+    // the right, left, or both ends, respectively - to fit.
     Draw& left(int span) { align_ = Align::Left; span_ = span; return *this; }
     Draw& right(int span) { align_ = Align::Right; span_ = span; return *this; }
     Draw& mid(int span) { align_ = Align::Mid; span_ = span; return *this; }
 
-    // Like left(), but text that overflows the field is abbreviated with a mid-string
-    // ellipsis ('…' U+2026) instead of being hard-truncated at the right edge. If the
-    // text has a short extension (<= kMaxExtLen chars after the last '.', ignoring a
-    // leading dot as in ".bashrc"), the extension is kept visible (without its dot)
-    // right after the ellipsis; otherwise the ellipsis simply replaces the trailing part
-    // of the text.
-    Draw& abbr(int span) { align_ = Align::Abbr; span_ = span; return *this; }
+    // Which part(s) of the text survive when it overflows the field, marking the cut
+    // with a mid-string ellipsis ('…' U+2026) instead of a hard cut: Keep::Left/Right/
+    // Mid keep the head/tail/middle slice (one ellipsis, in place of the discarded
+    // part); Keep::Both keeps the head and, if the text has a short extension (<=
+    // kMaxExtLen chars after the last '.', ignoring a leading dot as in ".bashrc"), the
+    // extension too (one ellipsis in between, dot dropped) - with no usable extension,
+    // Keep::Both behaves like Keep::Left. Once given, ellipsize() decides the cut on
+    // its own; left()/mid()/right() then only affect where the text sits when it *fits*
+    // the field.
+    enum class Keep { Default, Left, Mid, Right, Both };
+    Draw& ellipsize(Keep keep) { keep_ = keep; return *this; }
 
     // Puts a single glyph at (x_, y_).
     Draw& put(Rune u, ushort mode = ATTR_NULL);
@@ -66,18 +72,19 @@ public:
     }
 
 private:
-    enum class Align { Left, Right, Mid, Abbr };
+    enum class Align { Left, Right, Mid };
 
-    // Handles Align::Abbr abbreviation for text that overflows the `xend`-cell boundary,
-    // writing glyphs and advancing x_ as it goes. Returns false without writing
-    // anything if the text already fits the field - the caller should fall back to
-    // normal left-aligned streaming in that case.
-    bool put_ellipsized(std::string_view s, int xend, ushort mode);
+    // Handles a Left field's Keep::Left/Both ellipsis case for text overflowing the
+    // `xend`-cell boundary, writing glyphs and advancing x_ as it goes. Returns false
+    // without writing anything if the text already fits the field - the caller should
+    // fall back to normal left-aligned streaming in that case.
+    bool put_left_ellipsized(std::string_view s, int xend, ushort mode);
 
     Canvas& canvas_;
     int x_ = 0, y_ = 0;  // cursor within the panel
     uint32_t fg_ = 0, bg_ = 0;
     Align align_ = Align::Left;
+    Keep keep_ = Keep::Default;
     int span_;  // field width
 };
 

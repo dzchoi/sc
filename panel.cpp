@@ -103,6 +103,13 @@ inline void type_to_pty(std::string_view s)
     ttywrite(s.data(), s.size(), 1);
 }
 
+// Appends a trailing '/' unless already present (e.g. root "/").
+static std::string with_trailing_slash(std::string s)
+{
+    if (s.empty() || s.back() != '/') s.push_back('/');
+    return s;
+}
+
 // Human-readable size, fits in Panel::kColSize cells (right-aligned when printed).
 // Byte counts up to 1M are shown verbatim (exact); larger sizes are abbreviated as
 // "DDDD.DM" (one truncated decimal digit, unit suffix M/G/T), where the integer part is
@@ -198,7 +205,7 @@ void Panel::load_entries(const struct stat& pst)
     Entry dotdot{"..", true, 0};
     struct stat st{};
     bool matched = false;
-    if (::lstat((cwd_ + "/..").c_str(), &st) == 0) {
+    if (::lstat((cwd_ + "..").c_str(), &st) == 0) {
         dotdot.size  = st.st_size;
         dotdot.mtime = st.st_mtime;
         matched = (st.st_dev == pst.st_dev && st.st_ino == pst.st_ino);
@@ -212,7 +219,7 @@ void Panel::load_entries(const struct stat& pst)
             if (std::strcmp(de->d_name, "..") == 0) continue;
             Entry e;
             e.name = de->d_name;
-            const std::string full = cwd_ + "/" + e.name;
+            const std::string full = cwd_ + e.name;
             struct stat st{};  // zeroed each iteration in case lstat() below fails.
             if (::lstat(full.c_str(), &st) == 0) {
                 e.is_dir = S_ISDIR(st.st_mode);
@@ -273,7 +280,7 @@ std::string Panel::shell_cwd()
     std::snprintf(proc, sizeof(proc), "/proc/%d/cwd", static_cast<int>(shell_pid_));
     ssize_t n = ::readlink(proc, buf, sizeof(buf) - 1);
     if (n <= 0) return {};
-    return std::string(buf, n);
+    return with_trailing_slash(std::string(buf, n));
 }
 
 // =========================================================================
@@ -300,7 +307,7 @@ void Panel::render()
         .move(column.date_x - 1).put(kFrameTT)
         .move(column.time_x - 1).put(kFrameTT)
         .move(width - 1).put(kFrameTR)
-        .move(1).mid(width - 2).put(cwd_, ATTR_REVERSE);
+        .move(1).mid(width - 2).ellipsize(Draw::Keep::Right).put(cwd_, ATTR_REVERSE);
 
     // --- Row 1: column headers ---
     draw.move(0, 1).color(kFrameFg, bg).fill(' ')
@@ -353,7 +360,7 @@ void Panel::render()
             .color(kFrameFg, bg).put(kFrameV).color(fg_text)
 
             // Name column (abbreviated to fit or left-aligned)
-            .abbr(column.name_w).put(
+            .left(column.name_w).ellipsize(Draw::Keep::Both).put(
                 e.name + (e.is_dir ? "/" : "")
                 , mode)
             .with_fg(fg_frame, [&](Draw& d){ d.put(kFrameV, mode); })
@@ -390,7 +397,8 @@ void Panel::render()
         .move(0).with_fg(kFrameFg, [](Draw& d){ d.put(kFrameV); })
 
         // Name column (abbreviated to fit or left-aligned)
-        .abbr(column.name_w).put(e.name + (e.is_dir ? "/" : ""))
+        .left(column.name_w).ellipsize(Draw::Keep::Both)
+            .put(e.name + (e.is_dir ? "/" : ""))
 
         // Size column (right-aligned)
         .move(column.size_x)
@@ -424,7 +432,7 @@ Panel::Panel()
     // The child shell inherits our current working directory (cwd) during the fork.
     char buf[PATH_MAX];
     // Cannot use shell_now() instead of getcwd() now until init() is called.
-    cwd_ = ::getcwd(buf, sizeof(buf)) ? buf : "/";
+    cwd_ = with_trailing_slash(::getcwd(buf, sizeof(buf)) ? buf : "");
     recompute_geometry();
 }
 
@@ -527,7 +535,7 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char* buf, int 
                 goto clamp_cursor;
             }
             if (!typing_)
-                type_to_pty("cd " + shell_quote(cwd_ + "/..") + "\n");
+                type_to_pty("cd " + shell_quote(cwd_ + "..") + "\n");
             return true;
         case XK_Page_Down:
             if ((state & ControlMask) == 0) {
@@ -536,7 +544,7 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char* buf, int 
             }
             if (!typing_ && entries_[cursor_idx_].is_dir) {
                 const Entry& e = entries_[cursor_idx_];
-                type_to_pty("cd " + shell_quote(cwd_ + "/" + e.name) + "\n");
+                type_to_pty("cd " + shell_quote(cwd_ + e.name) + "\n");
             }
             return true;
 
@@ -553,12 +561,12 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char* buf, int 
             const Entry& e = entries_[cursor_idx_];
             if (e.is_dir) {
                 // We could change cwd now to update the panel quickly.
-                // set_cwd(cwd_ + "/" + e.name);
+                // set_cwd(cwd_ + e.name);
                 // type_to_pty("cd " + shell_quote(cwd_) + "\n");
-                type_to_pty("cd " + shell_quote(cwd_ + "/" + e.name) + "\n");
+                type_to_pty("cd " + shell_quote(cwd_ + e.name) + "\n");
             } else {
                 // Execute the selected file immediately.
-                type_to_pty(shell_quote(cwd_ + "/" + e.name) + "\n");
+                type_to_pty(shell_quote(cwd_ + e.name) + "\n");
                 visible_ = false;
             }
             return true;
