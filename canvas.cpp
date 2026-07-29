@@ -72,6 +72,17 @@ int scan_ext(std::string_view s, int* dot_cp_idx, ptrdiff_t* dot_byte_off)
     return n;
 }
 
+// Code-point length of a short extension worth preserving after a '.' at code-point
+// index `dot_idx` (or -1 if there's no dot), out of `n` total code points; 0 if there's
+// no usable extension (no dot, a leading dot as in ".bashrc", or longer than
+// kMaxExtLen).
+int ext_len(int dot_idx, int n)
+{
+    if (dot_idx <= 0) return 0;
+    const int l = n - dot_idx - 1;
+    return l <= kMaxExtLen ? l : 0;
+}
+
 }  // namespace
 
 
@@ -99,7 +110,7 @@ Draw& Draw::fill(Rune u, ushort mode)
     return *this;
 }
 
-bool Draw::put_ellipsized(std::string_view s, int xend, ushort mode)
+bool Draw::put_left_ellipsized(std::string_view s, int xend, ushort mode)
 {
     if (xend <= x_) return false;
 
@@ -109,18 +120,16 @@ bool Draw::put_ellipsized(std::string_view s, int xend, ushort mode)
     const int span = xend - x_;
     if (n_cps <= span) return false;  // fits; let the caller stream it normally
 
-    // Doesn't fit: emit a prefix, an ellipsis, and (if short enough) the extension
-    // minus its dot, all in a single left-to-right pass.
+    // Doesn't fit: emit a prefix, an ellipsis, and (if Keep::Both and short enough) the
+    // extension minus its dot, all in a single left-to-right pass.
     bool keep_ext = false;
     int l_prefix = span - 1;  // budget with ellipsis only
-    if (dot_cp_idx > 0) {  // > 0 excludes a leading dot, as in ".bashrc".
-        const int l_ext = n_cps - dot_cp_idx - 1;  // chars after the dot
-        if (l_ext <= kMaxExtLen) {
-            const int budget = span - l_ext - 1;  // ellipsis + extension
-            if (budget >= 0) {
-                keep_ext = true;
-                l_prefix = budget;
-            }
+    if (keep_ == Keep::Both) {
+        const int l_ext = ext_len(dot_cp_idx, n_cps);
+        const int budget = span - l_ext - 1;  // ellipsis + extension
+        if (budget >= 0) {
+            keep_ext = true;
+            l_prefix = budget;
         }
     }
 
@@ -168,11 +177,11 @@ Draw& Draw::put(std::string_view s, ushort mode)
     const unsigned char* p = reinterpret_cast<const unsigned char*>(s.data());
     const unsigned char* pend = p + s.size();
 
-    if (align_ == Align::Left || align_ == Align::Abbr) {
-        // Left-aligned text can be streamed glyph-by-glyph; we never need to know its
-        // total width up front, since overflow is simply cut off at xend (unless
-        // Align::Abbr asks for a nicer abbreviation instead; see put_ellipsized()).
-        if (align_ == Align::Left || !put_ellipsized(s, xend, mode)) {
+    if (align_ == Align::Left && keep_ != Keep::Mid && keep_ != Keep::Right) {
+        // A Left field with at most a single trailing ellipsis (Keep::Default/Left/Both)
+        // can be streamed glyph-by-glyph; we never need to know its total width up
+        // front.
+        if (keep_ == Keep::Default || !put_left_ellipsized(s, xend, mode)) {
             while (p < pend && x_ < xend) {
                 Rune u;
                 p += utf8_next(p, pend, &u);
@@ -184,33 +193,78 @@ Draw& Draw::put(std::string_view s, ushort mode)
     }
 
     else {
-        // right- or mid-aligned: decode fully first to learn the text's width, since
-        // that determines where within the field it starts.
+        // Right-/mid-aligned, or a Left field with a Mid/Right ellipsize(): decode
+        // fully first, since the starting position depends on the text's total width.
         std::vector<Glyph> buf;
-        buf.reserve(span_);
+        buf.reserve(s.size());  // upper bound on code point count; never overflows
         while (p < pend) {
             Rune u;
             p += utf8_next(p, pend, &u);
             buf.push_back(Glyph{u, mode, fg_, bg_});
         }
 
-        int slack = xend - x_ - static_cast<int>(buf.size());
-        if (align_ == Align::Mid) slack /= 2;
-        int skip = 0;  // code-points dropped from the front when the text overflows.
-        if (slack > 0)
-            skip_or_fill(x_ + slack);  // leading blanks for right- or mid-aligned text
-        else
-            skip = -slack;
+        const int n = static_cast<int>(buf.size());
+        const int span = xend - x_;
+        if (n <= span) {
+            // Fits: position within the field per align_; ellipsize() only matters on
+            // overflow.
+            int lead = span - n;
+            if (align_ == Align::Left) lead = 0;
+            else if (align_ == Align::Mid) lead /= 2;
+            skip_or_fill(x_ + lead);
+            for (const Glyph& g : buf) canvas_.cell(y_, x_++) = g;
+        }
 
-        for (auto it = buf.cbegin() + skip; it != buf.cend() && x_ < xend; ++it)
-            canvas_.cell(y_, x_++) = *it;
+        else if (keep_ == Keep::Default) {
+            // Overflow, no ellipsis: hard-cut per align_'s own implicit direction.
+            // (Align::Left never reaches here with Keep::Default - see above.)
+            const int skip = (align_ == Align::Right) ? n - span : (n - span) / 2;
+            for (int i = skip; i < n && x_ < xend; ++i)
+                canvas_.cell(y_, x_++) = buf[i];
+        }
 
-        skip_or_fill(xend);  // trailing blanks for mid-aligned text
+        else {
+            // Overflow, ellipsized: keep_ decides the cut on its own, regardless of
+            // align_.
+            const bool head_cut = (keep_ == Keep::Right || keep_ == Keep::Mid);
+            const bool tail_cut =
+                (keep_ == Keep::Left || keep_ == Keep::Mid || keep_ == Keep::Both);
+
+            int ext_idx = -1, l_ext = 0;  // Keep::Both: index/length of a kept extension
+            if (keep_ == Keep::Both) {
+                int dot_idx = -1;
+                for (int i = 0; i < n; ++i)
+                    if (buf[i].u == '.') dot_idx = i;
+                l_ext = ext_len(dot_idx, n);
+                if (l_ext > 0)
+                    ext_idx = dot_idx + 1;
+            }
+
+            int budget = span - head_cut - tail_cut - l_ext;
+            if (budget < 0) budget = 0;
+            const int start =
+                (keep_ == Keep::Right) ? n - budget :
+                (keep_ == Keep::Mid) ? (n - budget) / 2 : 0;
+
+            if (head_cut && x_ < xend)
+                canvas_.cell(y_, x_++) = Glyph{kEllipsis, mode, fg_, bg_};
+            for (int i = 0; i < budget && x_ < xend; ++i)
+                canvas_.cell(y_, x_++) = buf[start + i];
+            if (tail_cut && x_ < xend) {
+                canvas_.cell(y_, x_++) = Glyph{kEllipsis, mode, fg_, bg_};
+                if (ext_idx >= 0)
+                    for (int i = ext_idx; i < n && x_ < xend; ++i)
+                        canvas_.cell(y_, x_++) = buf[i];
+            }
+        }
+
+        skip_or_fill(xend);  // trailing blanks, if the field wasn't fully written.
     }
 
-    // Reset the alignment.
+    // Reset the field state.
     align_ = Align::Left;
     span_ = canvas_.width_;
+    keep_ = Keep::Default;
     return *this;
 }
 

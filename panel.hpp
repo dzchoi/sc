@@ -117,7 +117,7 @@ private:
 
     // ----- data -----
     std::string cwd_;             // the current working directory
-    std::vector<Entry> entries_;  // cache of the entries in cwd_
+    std::vector<Entry> entries_;  // cache of the entries in cwd_, always ends with '/'
     int cursor_idx_ = 0;          // index into entries_ of the highlighted row
     int scroll_idx_ = 0;          // index into entries_ of the first visible row
 
