@@ -32,10 +32,10 @@ $(BUILDDIR)/%.o: %.c | $(BUILDDIR)
 $(BUILDDIR)/%.o: %.cpp | $(BUILDDIR)
 	$(CXX) $(STCXXFLAGS) -c $< -o $@
 
-$(BUILDDIR)/canvas.o:  canvas.cpp win.h
+$(BUILDDIR)/canvas.o:  canvas.cpp sc_config.hpp win.h
 $(BUILDDIR)/st.o:      config.h st.h win.h panel.h
 $(BUILDDIR)/x.o:       arg.h config.h st.h win.h panel.h
-$(BUILDDIR)/panel.o:   canvas.hpp panel.h panel.hpp st.h
+$(BUILDDIR)/panel.o:   canvas.hpp panel.h panel.hpp sc_config.hpp st.h
 
 $(OBJ): config.h config.mk
 

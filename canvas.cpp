@@ -2,6 +2,9 @@
 #include <cstddef>
 
 #include "canvas.hpp"
+#include "sc_config.hpp"
+
+
 
 extern "C" {
 #include "win.h"        // xdrawline()
@@ -42,9 +45,6 @@ int utf8_next(const unsigned char* p, const unsigned char* pend, Rune* out)
     return 1;
 }
 
-constexpr Rune kEllipsis = 0x2026;
-constexpr int kMaxExtLen = 5;
-
 // Scans a whole UTF-8 string in one pass: counts how many code points `s` contains,
 // and finds the last '.' code point in `s` (if any) to abbreviate around. Returns the
 // code point count. If a dot is found, *dot_cp_idx and *dot_byte_off are set to its
@@ -75,12 +75,12 @@ int scan_ext(std::string_view s, int* dot_cp_idx, ptrdiff_t* dot_byte_off)
 // Code-point length of a short extension worth preserving after a '.' at code-point
 // index `dot_idx` (or -1 if there's no dot), out of `n` total code points; 0 if there's
 // no usable extension (no dot, a leading dot as in ".bashrc", or longer than
-// kMaxExtLen).
+// kMaxLenExt).
 int ext_len(int dot_idx, int n)
 {
     if (dot_idx <= 0) return 0;
     const int l = n - dot_idx - 1;
-    return l <= kMaxExtLen ? l : 0;
+    return l <= kMaxLenExt ? l : 0;
 }
 
 }  // namespace

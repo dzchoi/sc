@@ -29,6 +29,7 @@
 #include <X11/keysym.h>
 
 #include "panel.hpp"
+#include "sc_config.hpp"
 
 extern "C" {
 #include "panel.h"      // C ABI shim
@@ -40,40 +41,6 @@ extern "C" {
 // =========================================================================
 
 namespace {
-
-// ----- colors (indices into the 256-color palette) --------------------------
-// 0:  black
-// 1:  red
-// 2:  green
-// 3:  yellow
-// 4:  blue
-// 5:  magenta
-// 6:  cyan
-// 7:  white (light gray)
-// 8:  bright black (dark gray)
-// 9:  bright red
-// 10: bright green
-// 11: bright yellow
-// 12: bright blue
-// 13: bright magenta
-// 14: bright cyan
-// 15: bright white
-constexpr uint32_t kFg      = 7;
-constexpr uint32_t kBg      = 4;
-constexpr uint32_t kSelFg   = 3;
-constexpr uint32_t kFrameFg = 6;
-
-// ----- frame glyphs (Unicode box drawing) -----------------------------------
-constexpr Rune kFrameH  = 0x2500;  // ─
-constexpr Rune kFrameV  = 0x2502;  // │
-constexpr Rune kFrameTL = 0x250c;  // ┌
-constexpr Rune kFrameTR = 0x2510;  // ┐
-constexpr Rune kFrameBL = 0x2514;  // └
-constexpr Rune kFrameBR = 0x2518;  // ┘
-constexpr Rune kFrameLT = 0x251c;  // ├
-constexpr Rune kFrameRT = 0x2524;  // ┤
-constexpr Rune kFrameTT = 0x252c;  // ┬
-constexpr Rune kFrameBT = 0x2534;  // ┴
 
 // ----- generic helpers ------------------------------------------------------
 
@@ -110,15 +77,15 @@ static std::string with_trailing_slash(std::string s)
     return s;
 }
 
-// Human-readable size, fits in Panel::kColSize cells (right-aligned when printed).
+// Human-readable size, fits in Panel::kColsSize cells (right-aligned when printed).
 // Byte counts up to 1M are shown verbatim (exact); larger sizes are abbreviated as
 // "DDDD.DM" (one truncated decimal digit, unit suffix M/G/T), where the integer part is
 // always < 1024.
 std::string format_size(off_t bytes)
 {
     assert(bytes >= 0);
-    constexpr off_t kExactMax = 1024LL * 1024;
-    if (bytes <= kExactMax)
+    constexpr off_t ExactMax = 1024LL * 1024;
+    if (bytes <= ExactMax)
         return std::to_string(bytes);
 
     struct Unit { off_t div; char suffix; };
@@ -174,18 +141,18 @@ std::pair<std::string, std::string> format_mtime(time_t mtime)
 void Panel::recompute_geometry()
 {
     // Panel shows only when the terminal has room for both the panel and the shell.
-    // kMinRows and kMinCols are the minimum terminal dimensions (each half gets at least
-    // kMinRows/kHeightFrac rows and kMinCols/kWidthFrac cols).
+    // kMinRows and kMinCols are the minimum terminal dimensions (each half gets at
+    // least kMinRows/kFracHeight rows and kMinCols/kFracWidth cols).
     if (term_rows_ < kMinRows || term_cols_ < kMinCols) {
         canvas_.reset(0, 0, 0, 0, term_cols_);
         return;
     }
 
     const int top = 0;
-    const int width = term_cols_ / kWidthFrac;    // half the terminal
-    const int height = term_rows_ / kHeightFrac;  // half the terminal
+    const int width = term_cols_ - term_cols_ / kFracWidth;  // half the terminal
+    const int height = term_rows_ - term_rows_ / kFracHeight;
     const int left = term_cols_ - width;          // top-right placement
-    assert(height >= kFrameRows + 1);  // header (2) + one entry (1) + footer (3)
+    assert(height >= kMinRowsPanel);
     compute_cols(width);
 
     canvas_.reset(top, left, width, height, term_cols_);
@@ -295,13 +262,13 @@ void Panel::render()
     if (!dirty_) return;
     dirty_ = false;
 
-    const int list_rows = height - kFrameRows;  // excludes header and footer.
-    const uint32_t fg = kFg;
-    const uint32_t bg = kBg;
+    const int list_rows = height - kRowsPanelFrame;  // excludes header and footer.
+    const uint32_t fg = kFgDefault;
+    const uint32_t bg = kBgDefault;
     auto draw = std::move(canvas_.draw());
 
     // --- Row 0: top frame + title ---
-    draw.move(0, 0).color(kFrameFg, bg).fill(kFrameH)
+    draw.move(0, 0).color(kFgFrame, bg).fill(kFrameH)
         .move(0).put(kFrameTL)
         .move(column.size_x - 1).put(kFrameTT)
         .move(column.date_x - 1).put(kFrameTT)
@@ -310,15 +277,19 @@ void Panel::render()
         .move(1).mid(width - 2).ellipsize(Draw::Keep::Right).put(cwd_, ATTR_REVERSE);
 
     // --- Row 1: column headers ---
-    draw.move(0, 1).color(kFrameFg, bg).fill(' ')
+    draw.move(0, 1).color(kFgFrame, bg).fill(' ')
         .move(0).put(kFrameV)
-        .left(column.name_w).with_fg(kSelFg, [](Draw& d){ d.put("Name", ATTR_BOLD); })
+        .left(column.name_w)
+        .with_fg(kFgSelected, [](Draw& d){ d.put("Name", ATTR_BOLD); })
         .put(kFrameV)
-        .right(column.size_w).with_fg(kSelFg, [](Draw& d){ d.put("Size", ATTR_BOLD); })
+        .right(column.size_w)
+        .with_fg(kFgSelected, [](Draw& d){ d.put("Size", ATTR_BOLD); })
         .put(kFrameV)
-        .mid(column.date_w).with_fg(kSelFg, [](Draw& d){ d.put("Date", ATTR_BOLD); })
+        .mid(column.date_w)
+        .with_fg(kFgSelected, [](Draw& d){ d.put("Date", ATTR_BOLD); })
         .put(kFrameV)
-        .mid(column.time_w).with_fg(kSelFg, [](Draw& d){ d.put("Time", ATTR_BOLD); })
+        .mid(column.time_w)
+        .with_fg(kFgSelected, [](Draw& d){ d.put("Time", ATTR_BOLD); })
         .put(kFrameV);
 
     // Keep cursor in view.
@@ -336,7 +307,7 @@ void Panel::render()
 
         if (idx < 0 || idx >= static_cast<int>(entries_.size())) {
             draw.move(0, y).color(fg, bg).fill(' ')  // Clear the line first.
-                .move(0).color(kFrameFg).put(kFrameV)
+                .move(0).color(kFgFrame).put(kFrameV)
                 .move(column.size_x - 1).put(kFrameV)
                 .move(column.date_x - 1).put(kFrameV)
                 .move(column.time_x - 1).put(kFrameV)
@@ -348,16 +319,16 @@ void Panel::render()
         const ushort mode = selected
             ? ATTR_REVERSE | ATTR_CLEAR_FIELD : ATTR_CLEAR_FIELD;
         // Selected: frame matches text color (dimmed while typing_).
-        // Unselected: frame stays kFrameFg regardless of typing_.
-        const uint32_t fg_text  = (selected && typing_) ? kFrameFg : fg;
-        const uint32_t fg_frame = selected ? fg_text : kFrameFg;
+        // Unselected: frame stays kFgFrame regardless of typing_.
+        const uint32_t fg_text  = (selected && typing_) ? kFgFrame : fg;
+        const uint32_t fg_frame = selected ? fg_text : kFgFrame;
 
         const Entry& e = entries_[idx];
         auto [date, time] = format_mtime(e.mtime);
 
         // Draw row frame.
         draw.move(0, y)
-            .color(kFrameFg, bg).put(kFrameV).color(fg_text)
+            .color(kFgFrame, bg).put(kFrameV).color(fg_text)
 
             // Name column (abbreviated to fit or left-aligned)
             .left(column.name_w).ellipsize(Draw::Keep::Both).put(
@@ -379,11 +350,11 @@ void Panel::render()
 
             // Time column
             .right(column.time_w).put(time, mode)
-            .color(kFrameFg).put(kFrameV);
+            .color(kFgFrame).put(kFrameV);
     }
 
     // Row -3: separator frame
-    draw.move(0, height - 3).color(kFrameFg, bg).fill(kFrameH)
+    draw.move(0, height - 3).color(kFgFrame, bg).fill(kFrameH)
         .move(0).put(kFrameLT)
         .move(column.size_x - 1).put(kFrameBT)
         .move(column.date_x - 1).put(kFrameBT)
@@ -394,7 +365,7 @@ void Panel::render()
     const Entry& e = entries_[cursor_idx_];
     auto [date, time] = format_mtime(e.mtime);
     draw.move(0, height - 2).color(fg, bg).fill(' ')
-        .move(0).with_fg(kFrameFg, [](Draw& d){ d.put(kFrameV); })
+        .move(0).with_fg(kFgFrame, [](Draw& d){ d.put(kFrameV); })
 
         // Name column (abbreviated to fit or left-aligned)
         .left(column.name_w).ellipsize(Draw::Keep::Both)
@@ -414,10 +385,10 @@ void Panel::render()
         // Time column
         .move(column.time_x)
         .right(column.time_w).put(time)
-        .color(kFrameFg).put(kFrameV);
+        .color(kFgFrame).put(kFrameV);
 
     // Row -1: bottom frame
-    draw.move(0, height - 1).color(kFrameFg, bg).fill(kFrameH)
+    draw.move(0, height - 1).color(kFgFrame, bg).fill(kFrameH)
         .move(0).put(kFrameBL)
         .move(width - 1).put(kFrameBR);
 }
@@ -510,7 +481,7 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char* buf, int 
 {
     assert(cursor_idx_ >= 0);  // entries_[] is never empty (when visible()).
     if (!visible()) return false;
-    const int list_rows = canvas_.height() - kFrameRows;
+    const int list_rows = canvas_.height() - kRowsPanelFrame;
     const int n = static_cast<int>(entries_.size());
     const int old_cursor_idx = cursor_idx_;
 

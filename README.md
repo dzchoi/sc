@@ -55,12 +55,39 @@ Current implementation uses a simple state switch:
 
 ### To-do
 
+### Shell integration
+```
+sc-cd-child() {
+  local kind path
+  read -r kind path < <(scctl selected-entry) || return
+  [[ $kind == directory ]] || return
+
+  builtin cd -- "$path" || return
+  zle reset-prompt
+}
+zle -N sc-cd-child
+bindkey '<private Ctrl-PgDn sequence>' sc-cd-child
+
+sc-enter() {
+  if [[ -z $BUFFER ]]; then
+    # panel action: open selected item / whatever SC defines
+  else
+    zle .accept-line
+  fi
+}
+zle -N sc-enter
+bindkey '^M' sc-enter
+```
+
+- zle reset-prompt repaints the current editing line in place: it re-expands and replaces the existing prompt, then redraws the unchanged $BUFFER. It does not accept the line or add a new newline/prompt.
+
 #### Appearance
   - No icon
   - Symlinks
-  - Do not display `cd <dir>` when changing directories from the panel.
   - Display the expanded value of history expansions (e.g. !!, !^, etc.) inline.
   - History selection menu.
+  - Hangul typing shows a combination box.
+  - `Panel::dirty_` for each panel row instead of the entire panel
 
 #### Mouse
   - Mouse selects text within the panel.
