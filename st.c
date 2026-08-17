@@ -721,14 +721,17 @@ sigchld(int a)
 		p = waitpid(pid, &stat, WNOHANG);
 	} while (p < 0 && errno == EINTR);
 
-	if (p < 0)
+	if (p < 0) {
+		panel_cleanup_ipc();
 		_exit(1);
+	}
 
 	if (pid != p) {
 		errno = olderrno;
 		return;
 	}
 
+	panel_cleanup_ipc();
 	if ((WIFEXITED(stat) && WEXITSTATUS(stat)) || WIFSIGNALED(stat))
 		_exit(1);
 	_exit(0);
@@ -787,9 +790,8 @@ ttynew(const char *line, char *cmd, const char *out, char **args)
 	if (openpty(&m, &s, NULL, NULL, NULL) < 0)
 		die("openpty failed: %s\n", strerror(errno));
 
-	sc_socket = panel_preinit();
-	if (sc_socket != NULL)
-		setenv("SC_SOCKET", sc_socket, 1);
+	sc_socket = panel_preinit();  // Expect a non-empty socket path string.
+	setenv("SC_SOCKET", sc_socket, 1);
 
 	switch (pid = fork()) {
 	case -1:

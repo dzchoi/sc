@@ -1,0 +1,40 @@
+// See LICENSE for license details.
+//
+// Owner for SC's private Unix-domain control socket.
+
+#pragma once
+
+#include <sys/types.h>
+#include <sys/un.h>
+
+class Panel;
+
+class Ipc {
+public:
+    Ipc() = default;
+    Ipc(const Ipc&) = delete;
+    Ipc& operator=(const Ipc&) = delete;
+    ~Ipc() { cleanup(); }
+
+    // Creates the owner-only control socket. This is called before the shell forks,
+    // so the returned path can be passed to the child through SC_SOCKET.
+    const char* init();
+    int fd() const { return m_fd; }
+
+    // Releases the socket using only async-signal-safe operations. The process that
+    // called init() is the sole owner; forked children leave the parent's socket alone.
+    // Once init() returns, cleanup() is the only operation that mutates this state.
+    void cleanup() noexcept;
+
+    // Services one pending client request using the panel's current selection state.
+    void service(const Panel& panel);
+
+private:
+    inline static constexpr char kDirectoryTemplate[] = "/tmp/sc-XXXXXX";
+    inline static constexpr char kSocketName[] = "/control";
+
+    pid_t m_owner = 0;
+    int m_fd = -1;
+    char m_directory[sizeof(kDirectoryTemplate)]{};
+    sockaddr_un m_address{};
+};

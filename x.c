@@ -1983,8 +1983,7 @@ run(void)
 		FD_ZERO(&rfd);
 		FD_SET(ttyfd, &rfd);
 		FD_SET(xfd, &rfd);
-		if (ipcfd >= 0)
-			FD_SET(ipcfd, &rfd);
+		FD_SET(ipcfd, &rfd);
 
 		if (XPending(xw.dpy))
 			timeout = 0;  /* existing events might not set xfd */
@@ -2012,7 +2011,7 @@ run(void)
 
 		if (FD_ISSET(ttyfd, &rfd))
 			ttyread();
-		if (ipcfd >= 0 && FD_ISSET(ipcfd, &rfd))
+		if (FD_ISSET(ipcfd, &rfd))
 			panel_service_ipc();
 
 		xev = 0;

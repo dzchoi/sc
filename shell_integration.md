@@ -1,9 +1,9 @@
 # SC zsh shell integration
 
 SC remains a terminal overlay. The shell retains the full PTY size and owns its
-working directory, prompt, and editable command line. The optional zsh adapter
-allows panel actions to cooperate with that state without injecting `cd ...` into
-the command line.
+working directory, prompt, and editable command line. Its required zsh adapter
+lets panel actions cooperate with that state without injecting `cd ...` into the
+command line.
 
 ## Channels
 
@@ -16,14 +16,15 @@ SC panel keys -- private input -> zsh ZLE widgets
 | Component | Responsibility |
 | --- | --- |
 | `sc.zsh` | Owns ZLE's command buffer, `cd`, prompt construction, and Enter behavior. |
-| `panel.cpp` | Owns selection, panel geometry, visibility, and control-socket replies. |
+| `panel.cpp` | Owns selection, panel geometry, and visibility; supplies panel state to IPC replies. |
+| `ipc.cpp` | Owns the control socket's lifetime, transport, and request protocol. |
 | `st.c` | Creates `SC_SOCKET` before starting zsh and parses private OSC notifications. |
 | `x.c` | Watches the control socket in the main event loop. |
 | `scctl` | Queries the private socket for zsh. |
 
 ## Activation and startup
 
-Put this after prompt/theme configuration in `~/.zshrc`:
+SC requires this adapter. Put it after prompt/theme configuration in `~/.zshrc`:
 
 ```zsh
 if [[ -n ${SC_SOCKET-} ]]; then
@@ -85,9 +86,15 @@ socket named by `SC_SOCKET`, sends the request, and prints the response.
 `x.c` adds `panel_ipc_fd()` to its `pselect()` fd set. On readiness it calls
 `panel_service_ipc()`, which dispatches to:
 
-- `Panel::selected_reply()` for `selected`: type (`D` or `F`) plus absolute path;
+- `Ipc::service()` replies to `selected` with the type (`D` or `F`) plus entry name;
 - `Panel::prompt_padding(applied_padding)` for `padding <applied_padding>`: total
   number of prompt-owned newlines needed after replacing the adapter's existing prefix.
+
+The process that creates the socket remains its sole cleanup owner across `fork()`.
+Normal `exit()` paths release it through `Ipc`'s destructor. The `SIGCHLD` path calls
+the same idempotent cleanup explicitly before `_exit()`; that cleanup uses only
+async-signal-safe system calls. The forked shell cannot close or unlink the parent's
+socket through its inherited `Ipc` state.
 
 ## Cwd update path
 

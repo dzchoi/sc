@@ -20,12 +20,16 @@ extern "C" {
 #endif
 
 /* Create SC's private control socket before forking the shell. The returned path is
- * inherited through SC_SOCKET. Returns NULL when setup failed. */
+ * inherited through SC_SOCKET. Setup failures terminate SC. */
 const char* panel_preinit(void);
 
-/* Control socket integration for the zsh adapter. */
+/* Control socket used by SC's required zsh adapter. */
 int panel_ipc_fd(void);
 void panel_service_ipc(void);
+
+/* Release the parent-owned control socket. Safe to call from a signal handler and
+ * harmless in the forked shell process. */
+void panel_cleanup_ipc(void);
 
 /* Called once from ttynew() after the shell is forked. Must be called before
  * panel_poll() and panel_draw(). pty_fd is the master PTY fd; shell_pid is the forked

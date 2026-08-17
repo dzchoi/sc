@@ -78,6 +78,11 @@ typedef union {
 	const char *s;
 } Arg;
 
+#ifdef __cplusplus
+[[noreturn]]
+#else
+__attribute__((noreturn))
+#endif
 void die(const char *, ...);
 void redraw(void);
 void draw(void);

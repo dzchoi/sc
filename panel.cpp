@@ -9,7 +9,6 @@
 
 #include <algorithm>            // for std::any_of(), std::lower_bound(), ...
 #include <cassert>              // for assert()
-#include <charconv>             // for std::from_chars()
 #include <cstdint>              // for uint32_t
 #include <cstring>              // for std::strcmp(), std::memcpy(), ...
 #include <ctime>                // for localtime_r(), std::strftime()
@@ -20,13 +19,10 @@
 
 #include <dirent.h>             // for DIR, opendir(), ...
 #include <limits.h>             // for PATH_MAX
-#include <sys/socket.h>         // for sockaddr, socket(), ...
 #include <sys/stat.h>           // for struct stat, lstat(), ...
 #include <sys/types.h>          // for pid_t, ssize_t
-#include <sys/un.h>             // for sockaddr_un
 #include <termios.h>            // for tcgetpgrp()
 #include <unistd.h>             // for close(), getcwd(), ...
-
 #include <X11/X.h>              // for ControlMask, ShiftMask
 #include <X11/keysym.h>         // for XK_*
 
@@ -140,23 +136,6 @@ bool Panel::visible() const
     // initialization, and fail SC with an error message if it times out.
     return zsh_ready_ && shell_owns_tty_ && !hidden_
         && canvas_.width() > 0 && canvas_.height() > 0;
-}
-
-// Returns the total zsh-owned padding needed to place the prompt below the panel.
-int Panel::prompt_padding(int applied_padding) const
-{
-    const int prompt_y = std::max(0, cursor_y_ - applied_padding);
-    const bool cursor_obscured = visible()
-        && prompt_y >= canvas_.top() && prompt_y < canvas_.top() + canvas_.height();
-    return cursor_obscured ? canvas_.top() + canvas_.height() - prompt_y : 0;
-}
-
-std::string Panel::selected_reply() const
-{
-    if ( !visible() ) return "N\n";
-    assert( !entries_.empty() );
-    const Entry& entry = entries_[selected_idx_];
-    return std::string(entry.is_dir ? "D\t" : "F\t") + cwd_ + entry.name + "\n";
 }
 
 void Panel::recompute_geometry()
@@ -408,69 +387,20 @@ Panel::Panel()
     recompute_geometry();
 }
 
-const char* Panel::preinit()
+// Returns the total zsh-owned padding needed to place the prompt below the panel.
+int Panel::prompt_padding(int applied_padding) const
 {
-    if ( ipc_fd_ >= 0 ) return ipc_path_.c_str();
-
-    char directory[] = "/tmp/sc-XXXXXX";
-    if ( !::mkdtemp(directory) ) return nullptr;
-
-    const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-    if ( fd < 0 ) {
-        ::rmdir(directory);
-        return nullptr;
-    }
-
-    sockaddr_un address{};
-    address.sun_family = AF_UNIX;
-    ipc_path_ = std::string(directory) + "/control";
-    if ( ipc_path_.size() < sizeof(address.sun_path) ) {
-        std::memcpy(address.sun_path, ipc_path_.c_str(), ipc_path_.size() + 1);
-        if ( ::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) >= 0
-          && ::listen(fd, 4) >= 0 && ::chmod(ipc_path_.c_str(), 0600) >= 0 ) {
-            ipc_fd_ = fd;
-            return ipc_path_.c_str();
-        }
-        ::unlink(ipc_path_.c_str());
-    }
-
-    // Todo:
-    // Instead of opening ipc_fd_ to be -1, we would better fail SC with an error message.
-    // Then, these steps would move into the destructor of ipc_fd_.
-    ::close(fd);
-    ::rmdir(directory);
-    ipc_path_.clear();
-    return nullptr;
+    const int prompt_y = std::max(0, cursor_y_ - applied_padding);
+    const bool cursor_obscured = visible()
+        && prompt_y >= canvas_.top() && prompt_y < canvas_.top() + canvas_.height();
+    return cursor_obscured ? canvas_.top() + canvas_.height() - prompt_y : 0;
 }
 
-void Panel::service_ipc()
+const Panel::Entry* Panel::selected_entry() const
 {
-    if ( ipc_fd_ < 0 ) return;
-    const int client = ::accept4(ipc_fd_, nullptr, nullptr, SOCK_CLOEXEC);
-    if ( client < 0 ) return;
-
-    char request[32]{};
-    std::string reply = "E\n";
-    if ( const ssize_t n = ::read(client, request, sizeof(request) - 1); n > 0 ) {
-        if ( std::strcmp(request, "selected\n") == 0 )
-            reply = selected_reply();
-        else if ( std::strncmp(request, "padding ", 8) == 0 && request[n - 1] == '\n' ) {
-            int applied_padding;
-            const char* first = request + 8;
-            const char* last = request + n - 1;
-            const auto result = std::from_chars(first, last, applied_padding);
-            if ( result.ec == std::errc{} && result.ptr == last && applied_padding >= 0 )
-                reply = "P\t" + std::to_string(prompt_padding(applied_padding)) + "\n";
-        }
-    }
-
-    for ( size_t n = 0 ; n < reply.size() ;  ) {
-        const ssize_t written = ::send(client,
-            reply.data() + n, reply.size() - n, MSG_NOSIGNAL);
-        if ( written <= 0 ) break;
-        n += static_cast<size_t>(written);
-    }
-    ::close(client);
+    if ( !visible() ) return nullptr;
+    assert( !entries_.empty() );
+    return &entries_[selected_idx_];
 }
 
 void Panel::init(int pty_fd, pid_t shell_pid)
@@ -505,6 +435,11 @@ bool Panel::poll()
             load_entries(prev_dir_stat);
         }
     }
+
+    // Todo: Is this code necessary? Is it only because poll() can execute before
+    // notify_zsh_ready()?
+    // if ( !was_visible && now_visible )
+    //     refresh_prompt();
 
     return was_visible != now_visible;
 }
@@ -631,6 +566,7 @@ extern "C" {
 const char* panel_preinit(void) { return Panel::preinit(); }
 int panel_ipc_fd(void) { return Panel::ipc_fd(); }
 void panel_service_ipc(void) { g_panel.service_ipc(); }
+void panel_cleanup_ipc(void) { Panel::cleanup_ipc(); }
 
 void panel_init(int pty_fd, pid_t shell_pid) { g_panel.init(pty_fd, shell_pid); }
 int  panel_poll(void) { return g_panel.poll(); }

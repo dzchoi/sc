@@ -22,6 +22,7 @@
 #include <vector>               // for std::vector<>
 
 #include "canvas.hpp"           // for Canvas, Draw
+#include "ipc.hpp"              // for Ipc
 #include "sc_config.hpp"        // for SC configuration constants
 
 struct stat;
@@ -44,16 +45,16 @@ public:
     Panel(Panel&&) =default;
     Panel& operator=(Panel&&) =default;
 
-    // Todo: Encapsulate ipc_fd_, ipc_path_, ipc_fd(), and service_ipc() in a class.
-    // Create the Ipc class in ipc.cpp and .hpp. It has members non-static members:
-    // m_fd, m_path, init(), fd(), and service(). init() does the current Panel::init(),
-    // service() does the current Panel::service_ipc(). Its destructor cleans up the
-    // socket and related file.
-    // Panel has `static Ipc m_ipc` and Panel::preinit() calls m_ipc.init().
-    // static int Panel::ipc_fd() { return m_ipc.fd(); }
-    static const char* preinit();
-    static int ipc_fd() { return ipc_fd_; }
-    void service_ipc();
+    // Ipc owns the control socket's creation, lifetime, and request protocol.
+    // These methods expose it through Panel for the C ABI.
+    static const char* preinit() { return m_ipc.init(); }
+    static int ipc_fd() { return m_ipc.fd(); }
+    static void cleanup_ipc() noexcept { m_ipc.cleanup(); }
+    void service_ipc() { m_ipc.service(*this); }
+
+    // Queries used during service_ipc() execution.
+    int prompt_padding(int applied_padding) const;
+    const Entry* selected_entry() const;
 
     void init(int pty_fd, pid_t shell_pid);
 
@@ -96,9 +97,8 @@ private:
     // Set once from init() after the shell is forked; never change thereafter.
     inline static int pty_fd_ = -1;
     inline static pid_t shell_pid_ = 0;
-    inline static int ipc_fd_ = -1;
-    inline static std::string ipc_path_;
     inline static int cursor_y_ = 0;
+    inline static Ipc m_ipc;
 
     // ----- panel geometry -----
     Canvas canvas_;  // recompute_geometry() only resets its size.
@@ -116,8 +116,6 @@ private:
     int first_visible_idx_ = 0;   // index into entries_ of the first visible row
 
     bool visible() const;
-    int prompt_padding(int applied_padding) const;
-    std::string selected_reply() const;
 
     // Column X positions inside the panel (panel-local, 0 .. width-1).
     // Row layout:  | Name... | Size | Date | Time |

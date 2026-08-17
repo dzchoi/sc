@@ -40,10 +40,10 @@ make install
 The default install prefix is `/usr/local`. Use the appropriate privileges if
 your system requires them, or set `PREFIX` when invoking `make install`.
 
-## Enable zsh integration
+## Configure the required zsh integration
 
-SC currently supports zsh. After installing, add this after your prompt or
-theme setup in `~/.zshrc`:
+SC requires zsh and its adapter. After installing, add this after your prompt
+or theme setup in `~/.zshrc`:
 
 ```zsh
 if [[ -n ${SC_SOCKET-} ]]; then
@@ -53,8 +53,8 @@ fi
 ```
 
 If you installed to another prefix, change both paths. Then close and reopen
-SC. The condition ensures these bindings load only in zsh instances started by
-SC.
+SC. The condition ensures the required bindings load only in zsh instances
+started by SC.
 
 ## Use the panel
 

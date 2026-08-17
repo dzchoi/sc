@@ -72,7 +72,7 @@ _sc_insert_selected_name() {
 # Appends the full path of the selected item to the command line.
 _sc_insert_selected_path() {
     _sc_get_selected_entry || return
-    BUFFER+="${(q)REPLY}"
+    BUFFER+="${(q)${:-$PWD/$REPLY}}"
     CURSOR=${#BUFFER}
 }
 
@@ -88,7 +88,7 @@ _sc_enter() {
         if [[ $_sc_selected_entry_kind == D ]]; then
             builtin cd -- "$REPLY" && _sc_refresh_prompt
         else
-            BUFFER="${(q)REPLY}"
+            BUFFER="${(q)${:-$PWD/$REPLY}}"
             CURSOR=${#BUFFER}
             zle .accept-line
         fi
