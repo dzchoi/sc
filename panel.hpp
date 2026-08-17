@@ -16,13 +16,13 @@
 
 #pragma once
 
-#include <string>
-#include <string_view>
-#include <sys/types.h>
-#include <vector>
+#include <cassert>              // for assert()
+#include <string>               // for std::string
+#include <sys/types.h>          // for off_t, pid_t, time_t
+#include <vector>               // for std::vector<>
 
-#include "canvas.hpp"
-#include "sc_config.hpp"
+#include "canvas.hpp"           // for Canvas, Draw
+#include "sc_config.hpp"        // for SC configuration constants
 
 struct stat;
 
@@ -44,32 +44,39 @@ public:
     Panel(Panel&&) =default;
     Panel& operator=(Panel&&) =default;
 
-    // Geometry change from the terminal (called on tresize()).
-    void resize(int cols, int rows);
+    // Todo: Encapsulate ipc_fd_, ipc_path_, ipc_fd(), and service_ipc() in a class.
+    // Create the Ipc class in ipc.cpp and .hpp. It has members non-static members:
+    // m_fd, m_path, init(), fd(), and service(). init() does the current Panel::init(),
+    // service() does the current Panel::service_ipc(). Its destructor cleans up the
+    // socket and related file.
+    // Panel has `static Ipc m_ipc` and Panel::preinit() calls m_ipc.init().
+    // static int Panel::ipc_fd() { return m_ipc.fd(); }
+    static const char* preinit();
+    static int ipc_fd() { return ipc_fd_; }
+    void service_ipc();
 
-    // Called once from ttynew() to capture the master PTY fd and shell PID after the
-    // shell is forked.
-    static void init(int pty_fd, pid_t shell_pid);
+    void init(int pty_fd, pid_t shell_pid);
 
-    // ----- Draw lifecycle (call in this order once per frame) -----
-
-    // Refresh auto-visibility from the PTY's foreground process group. Returns true if
-    // visibility just changed (caller must force all rows dirty so the terminal content
-    // underneath, or the panel itself, gets repainted).
+    // Synchronize panel state derived from the shell. Returns true when panel visibility
+    // changed; the caller must then dirty terminal rows so covered content is restored
+    // or the newly visible overlay is repainted.
     bool poll();
 
-    // True if the overlay must be repainted this frame: either our content changed, or
-    // the terminal has dirtied rows we cover. term_dirty is term.dirty; must be read
-    // BEFORE drawregion() clears the flags.
+    // Whether the visible overlay must be redrawn. Returns true for panel-state changes
+    // or terminal damage within the panel rectangle. Read term_dirty before drawregion()
+    // clears its flags.
     bool needs_draw(const int* term_dirty) const;
 
     // Paint the panel overlay via xdrawline(). No-op if not visible.
     void draw();
 
-    // The panel's current height if visible, 0 otherwise.
-    int visible_height() const { return visible() ? canvas_.height() : 0; }
+    void resize(int cols, int rows);
+    static void set_cursor(int y) { cursor_y_ = y; }
 
-    // ----- User input -----
+    // Enables SC’s private ZLE key events.
+    void notify_zsh_ready();
+    void notify_cwd_changed() { cwd_changed_ = true; }
+    void refresh_prompt();
 
     // User hit Ctrl+O.
     void toggle_panel();
@@ -89,28 +96,29 @@ private:
     // Set once from init() after the shell is forked; never change thereafter.
     inline static int pty_fd_ = -1;
     inline static pid_t shell_pid_ = 0;
-    inline static bool typing_ = false;  // True while the user is typing command line.
+    inline static int ipc_fd_ = -1;
+    inline static std::string ipc_path_;
+    inline static int cursor_y_ = 0;
 
     // ----- panel geometry -----
     Canvas canvas_;  // recompute_geometry() only resets its size.
 
     // ----- panel state -----
-    bool visible_ = false;
-    bool hidden_ = false;  // true: force-hidden regardless of visible_
+    bool shell_owns_tty_ = false;
+    bool hidden_ = false;  // true: force-hidden regardless of shell ownership
+    bool zsh_ready_ = false;
+    bool cwd_changed_ = false;
     bool dirty_ = false;   // true: render() rebuilds canvas_'s buffer before next draw.
 
-    // ----- data -----
     std::string cwd_;             // the current working directory
     std::vector<Entry> entries_;  // cache of the entries in cwd_, always ends with '/'
-    int cursor_idx_ = 0;          // index into entries_ of the highlighted row
-    int scroll_idx_ = 0;          // index into entries_ of the first visible row
+    int selected_idx_ = 0;        // index into entries_ of the highlighted row
+    int first_visible_idx_ = 0;   // index into entries_ of the first visible row
 
-    // ----- queries -----
-    bool visible() const {
-        return visible_ && !hidden_ && canvas_.width() > 0 && canvas_.height() > 0;
-    }
+    bool visible() const;
+    int prompt_padding(int applied_padding) const;
+    std::string selected_reply() const;
 
-    // ----- geometry helpers -----
     // Column X positions inside the panel (panel-local, 0 .. width-1).
     // Row layout:  | Name... | Size | Date | Time |
     struct Cols {
@@ -132,16 +140,16 @@ private:
         column.date_x = column.time_x - 1 - kColsDate;
         column.size_x = column.date_x - 1 - kColsSize;
         column.name_w = column.size_x - 1 - column.name_x;  // shrinks/grows with width
-        assert(column.name_w > 0);
+        assert( column.name_w > 0 );
     }
 
     void recompute_geometry();
 
-    // ----- data helpers -----
-    // Rebuilds entries_[] from cwd_. pst is the previous directory's stat, used to
-    // re-locate that directory among the new entries (e.g. ".." after descending, or
-    // the subdir just left after ascending) and re-seat cursor_idx_ on it.
-    void load_entries(const struct stat& pst);
+    // Rebuilds entries_[] from cwd_. prev_dir_stat is the previous directory's stat,
+    // used to re-locate that directory among the new entries (e.g. ".." after
+    // descending, or the subdir just left after ascending) and re-seat selected_idx_ on
+    // it.
+    void load_entries(const struct stat& prev_dir_stat);
 
     // Returns the shell's cwd via /proc/<shell_pid>/cwd, or an empty string on failure.
     static std::string shell_cwd();

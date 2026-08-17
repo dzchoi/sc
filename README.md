@@ -1,108 +1,90 @@
-## [Suckless Commander]
+# SC — Simple Commander
 
-### How `panel_poll()` is called
+SC is an NC (Norton Commander)-inspired terminal for Linux. It is based on the
+[st](https://st.suckless.org/) terminal emulator and adds a keyboard-driven
+directory panel over the terminal screen. The panel follows your shell's
+current directory, so you can browse files without leaving the command line.
 
-The call chain is:
-```
-  run() [x.c - the main event loop]
-    --> pselect() - blocks until PTY data arrives or X event (keypress, etc.)
-    --> ttyread() - reads PTY bytes, parses them, updates term.line
-    --> XNextEvent() - dispatches X events (key/mouse/resize/etc.)
-    --> [if idle or maxlatency hit] draw() [st.c] --> panel_poll()
-```
+![SC running as an overlay: the shell remains available on the left while the current directory is shown in the top-right panel.](assets/sc-running.png)
 
-How often:  
-Not on every byte or every keypress. run() loops but only falls through to draw() after the batching logic decides a frame is due:
-  - On first activity, it waits up to minlatency (default 2 ms) for more data.
-  - If data keeps flowing (e.g. cat huge.txt), it keeps deferring with shrinking timeouts, but forces a draw after at most maxlatency (default 30 ms ~ 30 fps).
-  - If nothing has arrived (idle), it blocks in pselect() indefinitely - draw() is not called at all until the next event.
+## SC and Midnight Commander
 
-So panel_poll() is called:
-  - Never, when nothing is happening (no CPU use at idle).
-  - ~30 times/second at most, during heavy PTY output.
-  - Once per keypress (roughly), during interactive typing.
-  - Once per blink tick (every blinktimeout ms = 800 ms by default), if any blinking text is visible.
+Midnight Commander (MC) is a full-screen file manager: it takes over the
+terminal and supplies its own two-pane interface. SC is different. It is a
+terminal overlay, not a program running inside the terminal. Your shell keeps
+its normal prompt, command history, scrollback, and editable command line.
 
-### [Blocked] Determining Enter key target context (Panel vs. Command Line)
+SC currently has one panel in the top-right portion of the terminal. A
+two-panel layout is planned. The panel appears while the shell owns the
+terminal and hides automatically when a child program, such as an editor or
+pager, takes control.
 
-Current implementation uses a simple state switch:
-  - Panel focus: Enter targets the panel until a non-cursor navigation key is pressed.
-  - Command Line focus: Once a non-cursor key is typed, Enter executes the shell command line until next prompt appears.
+## Install
 
-#### Checking the line input from `zsh`:
-  - Modify user's .zshrc to install a hook that reports to the (upstream) terminal whether the current input line is non-empty, via a privatre OSC sequence (6770).
-    ```
-    zle-line-pre-redraw() {
-        if (( ${BUFFER} )); then
-          print -n '\e]6770;1\a'
-        else
-          print -n '\e]6770;0\a'
-    }
-    zle -N zle-line-pre-redraw
-    ```
-  - `strhandle()` [st.c] handles the OSC sequence.
-    ```
-    case 6770:
-        if (narg > 1)
-            panel_notify_cmdline(atoi(strescseq.args[1]) != 0);
-        return;
-    ```
-  - `panel_notify_cmdline()` needs only to set typed_since_prompt_.
-    ```
-    void Panel::notify_cmdline(bool nonempty) { typed_since_prompt_ = nonempty; }
-    ```
-  - However, Bash does not support such a hook.
+SC needs an X11 session, zsh, and the normal build dependencies for `st`:
+Xlib, Xft, Fontconfig, and FreeType.
 
-### To-do
+Build and launch it from the repository:
 
-### Shell integration
-```
-sc-cd-child() {
-  local kind path
-  read -r kind path < <(scctl selected-entry) || return
-  [[ $kind == directory ]] || return
-
-  builtin cd -- "$path" || return
-  zle reset-prompt
-}
-zle -N sc-cd-child
-bindkey '<private Ctrl-PgDn sequence>' sc-cd-child
-
-sc-enter() {
-  if [[ -z $BUFFER ]]; then
-    # panel action: open selected item / whatever SC defines
-  else
-    zle .accept-line
-  fi
-}
-zle -N sc-enter
-bindkey '^M' sc-enter
+```sh
+make
+./.build/sc
 ```
 
-- zle reset-prompt repaints the current editing line in place: it re-expands and replaces the existing prompt, then redraws the unchanged $BUFFER. It does not accept the line or add a new newline/prompt.
+To install `sc`, its zsh integration, and the `scctl` helper, run:
 
-#### Appearance
-  - No icon
-  - Symlinks
-  - Display the expanded value of history expansions (e.g. !!, !^, etc.) inline.
-  - History selection menu.
-  - Hangul typing shows a combination box.
-  - `Panel::dirty_` for each panel row instead of the entire panel
+```sh
+make install
+```
 
-#### Mouse
-  - Mouse selects text within the panel.
-  - Scroll back with mouse wheel.
+The default install prefix is `/usr/local`. Use the appropriate privileges if
+your system requires them, or set `PREFIX` when invoking `make install`.
 
-#### Keys
-  - F3: (colored) `less $0`
-  - F4: `vim $0` (not gvim)
-  - F5: fast copy using rsync?
-  - diff directories, ...
-  - Show memory usage, ...
+## Enable zsh integration
 
-#### Brief list
+SC currently supports zsh. After installing, add this after your prompt or
+theme setup in `~/.zshrc`:
 
-#### Two panels
+```zsh
+if [[ -n ${SC_SOCKET-} ]]; then
+  export SCCTL=/usr/local/bin/scctl
+  source /usr/local/share/sc/sc.zsh
+fi
+```
 
-#### Support VFS using fuse-zip
-  - Not only viewing a file in zip, we can execute a file directly from the zip.
+If you installed to another prefix, change both paths. Then close and reopen
+SC. The condition ensures these bindings load only in zsh instances started by
+SC.
+
+## Use the panel
+
+The panel needs a terminal at least 80 columns wide and 12 rows high. It shows
+the current directory, placing directories before files. Each entry includes
+its name, size or directory marker, modification date, and time.
+
+Press `Ctrl+O` to show or hide the panel. When it is visible:
+
+| Key | Action |
+| --- | --- |
+| `Up` / `Down` | Move the selection |
+| `Home` / `End` | Go to the first / last entry |
+| `Page Up` / `Page Down` | Move by one page |
+| `Ctrl+Page Up` | Change to the parent directory |
+| `Ctrl+Page Down` | Change to the selected directory |
+| `Ctrl+Enter` | Add the selected name to the command line |
+| `Ctrl+Shift+Enter` | Add the selected full path to the command line |
+| `Enter` | Run the typed command, or act on the selected entry |
+
+With an empty command line, `Enter` changes into a selected directory. For a
+selected file, it places the shell-quoted path on the command line and runs it.
+When a command is already being edited, `Enter` behaves normally and runs that
+command.
+
+## Current scope
+
+SC is a local-filesystem navigator. It does not yet include file copy/move
+commands, a viewer/editor, archive or VFS support, or mouse file management.
+
+## License
+
+See [LICENSE](LICENSE).

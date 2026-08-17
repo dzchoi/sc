@@ -2,11 +2,13 @@
 
 #pragma once
 
-#include <string>
-#include <vector>
+#include <cstdint>              // for uint32_t
+#include <string>               // for std::string, std::string_view
+#include <utility>              // for std::forward()
+#include <vector>               // for std::vector<>
 
 extern "C" {
-#include "st.h"         // Line, Glyph, Rune, ushort, ATTR_*
+#include "st.h"                 // for Glyph, Rune, ATTR_*, ...
 }
 
 
@@ -117,7 +119,6 @@ public:
     Draw draw() { return Draw(*this); }
 
     // Presents every row via xdrawline(). No-op if width_/height_ are 0.
-    // Todo: Make present()/row_ptr() const.
     void present();
 
 private:

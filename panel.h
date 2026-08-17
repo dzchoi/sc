@@ -19,15 +19,18 @@
 extern "C" {
 #endif
 
-/* Called from tresize() when the terminal geometry changes. */
-void panel_resize(int cols, int rows);
+/* Create SC's private control socket before forking the shell. The returned path is
+ * inherited through SC_SOCKET. Returns NULL when setup failed. */
+const char* panel_preinit(void);
+
+/* Control socket integration for the zsh adapter. */
+int panel_ipc_fd(void);
+void panel_service_ipc(void);
 
 /* Called once from ttynew() after the shell is forked. Must be called before
  * panel_poll() and panel_draw(). pty_fd is the master PTY fd; shell_pid is the forked
  * shell's PID. */
 void panel_init(int pty_fd, pid_t shell_pid);
-
-/* ----- Draw lifecycle: called from draw() each frome in this order ----- */
 
 /* Refresh auto-visibility from the PTY's foreground process group. Returns 1 if
  * visibility just changed (caller must force all rows dirty so the terminal content
@@ -42,10 +45,12 @@ int panel_needs_draw(const int* term_dirty);
 /* Paint the panel overlay via xdrawline(). No-op if not visible. */
 void panel_draw(void);
 
-/* The panel's current height if visible, 0 otherwise. */
-int panel_visible_height(void);
-
-/* ----- User input (called from x.c) ----- */
+/* Keep the panel informed of the terminal cursor without ever moving it. */
+void panel_resize(int cols, int rows);
+void panel_set_cursor(int x, int y);
+void panel_notify_zsh_ready(void);
+void panel_notify_cwd_changed(void);
+void panel_refresh_prompt(void);
 
 /* Ctrl+O handler. Toggles panel on/off. */
 void panel_toggle_panel(void);

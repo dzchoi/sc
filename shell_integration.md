@@ -1,0 +1,128 @@
+# SC zsh shell integration
+
+SC remains a terminal overlay. The shell retains the full PTY size and owns its
+working directory, prompt, and editable command line. The optional zsh adapter
+allows panel actions to cooperate with that state without injecting `cd ...` into
+the command line.
+
+## Channels
+
+```
+zsh / sc.zsh  -- OSC output -->  st.c / panel.cpp
+zsh / sc.zsh  <- socket RPC -->  panel.cpp
+SC panel keys -- private input -> zsh ZLE widgets
+```
+
+| Component | Responsibility |
+| --- | --- |
+| `sc.zsh` | Owns ZLE's command buffer, `cd`, prompt construction, and Enter behavior. |
+| `panel.cpp` | Owns selection, panel geometry, visibility, and control-socket replies. |
+| `st.c` | Creates `SC_SOCKET` before starting zsh and parses private OSC notifications. |
+| `x.c` | Watches the control socket in the main event loop. |
+| `scctl` | Queries the private socket for zsh. |
+
+## Activation and startup
+
+Put this after prompt/theme configuration in `~/.zshrc`:
+
+```zsh
+if [[ -n ${SC_SOCKET-} ]]; then
+  export SCCTL=/usr/local/bin/scctl
+  source /usr/local/share/sc/sc.zsh
+fi
+```
+
+`SC_SOCKET` exists only in zsh started by SC. Do not source the adapter in the
+parent shell before launching SC: the condition is false there.
+
+Startup proceeds as follows:
+
+1. `st.c:ttynew()` calls `panel_preinit()` before it forks.
+2. `Panel::preinit()` creates an owner-only Unix socket in a private `/tmp/sc-*`
+   directory.
+3. `ttynew()` exports its path as `SC_SOCKET`; the child zsh inherits it.
+4. The child zsh reads `.zshrc`, sources `sc.zsh`, installs ZLE widgets and
+   bindings, then emits OSC `6770`.
+5. `st.c:strhandle()` handles OSC `6770` with `panel_notify_zsh_ready()`.
+6. `Panel::notify_zsh_ready()` enables SC's private ZLE events.
+
+The readiness handshake prevents SC from sending its private sequences to a
+shell that has not loaded the adapter.
+
+## Panel keys and ZLE
+
+`Panel::handle_key()` continues to handle selection movement locally. For an
+operation requiring shell state, it writes a fixed private sequence to the PTY:
+
+| Key | Sequence | ZLE widget |
+| --- | --- | --- |
+| `Ctrl+PgUp` | `ESC [ 6770 ~` | `_sc_cd_parent` |
+| `Ctrl+PgDn` | `ESC [ 6771 ~` | `_sc_cd_child` |
+| `Ctrl+Enter` | `ESC [ 6772 ~` | `_sc_insert_selected_name` |
+| `Ctrl+Shift+Enter` | `ESC [ 6773 ~` | `_sc_insert_selected_path` |
+| panel refresh | `ESC [ 6774 ~` | `_sc_refresh_prompt` |
+
+The sequences contain no pathname and are not shell commands. They only select
+a ZLE widget. `_sc_cd_child`, for example, queries SC for the selected item and
+runs `builtin cd -- "$REPLY"` only when that item is a directory. ZLE retains
+the current `BUFFER` throughout this operation.
+
+Plain Enter is deliberately not consumed by the panel. `_sc_enter` owns it:
+
+- non-empty `BUFFER`: invoke `zle .accept-line`;
+- empty `BUFFER`, selected directory: change directory;
+- empty `BUFFER`, selected file: place its shell-quoted path in `BUFFER` and
+  accept the line.
+
+This makes ZLE's buffer, rather than a terminal-side heuristic, the authority
+for Enter behavior.
+
+## Control socket
+
+`sc.zsh` calls `scctl selected` or `scctl padding <applied_padding>`. `scctl` connects to the
+socket named by `SC_SOCKET`, sends the request, and prints the response.
+
+`x.c` adds `panel_ipc_fd()` to its `pselect()` fd set. On readiness it calls
+`panel_service_ipc()`, which dispatches to:
+
+- `Panel::selected_reply()` for `selected`: type (`D` or `F`) plus absolute path;
+- `Panel::prompt_padding(applied_padding)` for `padding <applied_padding>`: total
+  number of prompt-owned newlines needed after replacing the adapter's existing prefix.
+
+## Cwd update path
+
+`sc.zsh` installs a `chpwd` hook. Every successful zsh directory change emits
+OSC `6771`; `st.c:strhandle()` turns that into `panel_notify_cwd_changed()`.
+The panel then marks `cwd_changed_` and reconciles its cached directory against
+`/proc/<shell-pid>/cwd` on the next poll.
+
+The panel updates its cached directory when zsh reports a directory change, rather
+than sampling `/proc/.../cwd` on every redraw.
+
+## Prompt padding and redraw
+
+`st.c` reports the terminal cursor with `panel_set_cursor(x, y)`. The panel
+uses the cursor row to determine whether a prompt needs padding.
+
+Before zsh renders or refreshes a prompt, `_sc_update_prompt` calls
+`scctl padding <applied_padding>`. SC removes the adapter's existing prompt-owned
+newlines from the terminal cursor row and returns the total number of real newlines
+needed in `PROMPT`; `_sc_refresh_prompt` then calls `zle reset-prompt`. `_sc_precmd`
+starts each new prompt with `applied_padding` set to zero.
+
+ZLE emits and tracks these newlines itself, so its display model remains valid.
+SC never moves the terminal cursor or fakes a `SIGWINCH` to uncover a prompt.
+
+zle reset-prompt repaints the current editing line in place: it re-expands and replaces the existing prompt, then redraws the unchanged
+  $BUFFER. It does not accept the line or add a new newline/prompt.
+
+## Bash
+
+For the full design, Bash is substantially harder than zsh. I’d make zsh the supported shell first.
+Bash can cover part of it cleanly:
+- bind -x gives a handler access to READLINE_LINE, READLINE_POINT, and READLINE_MARK; changes are reflected back into the active editing buffer. So a Ctrl+PgDn handler can query SC, verify the selected entry is a directory, run cd, and preserve the draft. Bash bind -x documentation
+- PROMPT_COMMAND can add calculated prompt padding before Bash begins the next input line. Bash interactive-shell behavior
+
+But it lacks ZLE’s equivalent of “change the prompt and re-render this currently edited line.” Bash/Readline has redraw-current-line, but that refreshes the existing Readline display; it does not rerun PROMPT_COMMAND or reliably re-expand a changed PS1. Readline commands
+
+There is a second problem: a bind -x handler can inspect whether READLINE_LINE is empty, but it has no clean shell-level way to say “otherwise invoke Readline’s normal accept-line now.” Manually evaluating the buffer would diverge from normal Bash history, multiline input, completion, and error behavior.

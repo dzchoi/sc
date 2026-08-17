@@ -223,6 +223,11 @@ static XWindow xw;
 static XSelection xsel;
 static TermWindow win;
 
+/* Wait for the window geometry to settle before asking ZLE to redraw its prompt. */
+static const long RESIZE_SETTLE_DELAY = 150;
+/* A negative tv_nsec represents no scheduled prompt refresh. */
+static struct timespec prompt_refresh_deadline = { .tv_nsec = -1 };
+
 /* Font Ring Cache */
 enum {
 	FRC_NORMAL,
@@ -1879,9 +1884,9 @@ kpress(XEvent *ev)
 	}
 
 	/* 1.5. panel consumes keys while visible and interested. returns 0 for keys that
-	 * that should flow to the shell. */
+	 * should flow to the shell. */
 	if (panel_handle_key((unsigned long)ksym, e->state, buf, len)) {
-		redraw();
+		draw();
 		return;
 	}
 
@@ -1936,6 +1941,12 @@ resize(XEvent *e)
 		return;
 
 	cresize(e->xconfigure.width, e->xconfigure.height);
+	clock_gettime(CLOCK_MONOTONIC, &prompt_refresh_deadline);
+	prompt_refresh_deadline.tv_nsec += RESIZE_SETTLE_DELAY * 1000000L;
+	if (prompt_refresh_deadline.tv_nsec >= 1000000000L) {
+		prompt_refresh_deadline.tv_sec++;
+		prompt_refresh_deadline.tv_nsec -= 1000000000L;
+	}
 }
 
 void
@@ -1944,7 +1955,7 @@ run(void)
 	XEvent ev;
 	int w = win.w, h = win.h;
 	fd_set rfd;
-	int xfd = XConnectionNumber(xw.dpy), ttyfd, xev, drawing;
+	int xfd = XConnectionNumber(xw.dpy), ttyfd, ipcfd, xev, drawing;
 	struct timespec seltv, *tv, now, lastblink, trigger;
 	double timeout;
 
@@ -1965,21 +1976,34 @@ run(void)
 	} while (ev.type != MapNotify);
 
 	ttyfd = ttynew(opt_line, shell, opt_io, opt_cmd);
+	ipcfd = panel_ipc_fd();
 	cresize(w, h);
 
 	for (timeout = -1, drawing = 0, lastblink = (struct timespec){0};;) {
 		FD_ZERO(&rfd);
 		FD_SET(ttyfd, &rfd);
 		FD_SET(xfd, &rfd);
+		if (ipcfd >= 0)
+			FD_SET(ipcfd, &rfd);
 
 		if (XPending(xw.dpy))
 			timeout = 0;  /* existing events might not set xfd */
+		if (prompt_refresh_deadline.tv_nsec >= 0) {
+			clock_gettime(CLOCK_MONOTONIC, &now);
+			double remaining = TIMEDIFF(prompt_refresh_deadline, now);
+			if (remaining <= 0) {
+				panel_refresh_prompt();
+				prompt_refresh_deadline.tv_nsec = -1;
+			} else if (timeout < 0 || remaining < timeout) {
+				timeout = remaining;
+			}
+		}
 
 		seltv.tv_sec = timeout / 1E3;
 		seltv.tv_nsec = 1E6 * (timeout - 1E3 * seltv.tv_sec);
 		tv = timeout >= 0 ? &seltv : NULL;
 
-		if (pselect(MAX(xfd, ttyfd)+1, &rfd, NULL, NULL, tv, NULL) < 0) {
+		if (pselect(MAX(MAX(xfd, ttyfd), ipcfd)+1, &rfd, NULL, NULL, tv, NULL) < 0) {
 			if (errno == EINTR)
 				continue;
 			die("select failed: %s\n", strerror(errno));
@@ -1988,6 +2012,8 @@ run(void)
 
 		if (FD_ISSET(ttyfd, &rfd))
 			ttyread();
+		if (ipcfd >= 0 && FD_ISSET(ipcfd, &rfd))
+			panel_service_ipc();
 
 		xev = 0;
 		while (XPending(xw.dpy)) {
