@@ -31,19 +31,20 @@ void panel_service_ipc(void);
  * harmless in the forked shell process. */
 void panel_cleanup_ipc(void);
 
-/* Called once from ttynew() after the shell is forked. Must be called before
+/* Called once from ttynew() after the shell is forked. Waits up to
+ * kZshReadyTimeoutMs for the required adapter before returning. Must be called before
  * panel_poll() and panel_draw(). pty_fd is the master PTY fd; shell_pid is the forked
  * shell's PID. */
 void panel_init(int pty_fd, pid_t shell_pid);
 
-/* Refresh auto-visibility from the PTY's foreground process group. Returns 1 if
- * visibility just changed (caller must force all rows dirty so the terminal content
- * underneath, or the panel itself, gets repainted), 0 otherwise. */
+ /* Synchronize panel state derived from the shell. Returns true when panel visibility
+  * changed; the caller must then dirty terminal rows so covered content is restored or
+  * or the newly visible overlay is repainted. */
 int panel_poll(void);
 
-/* Returns 1 if the panel overlay must be redrawn this frame:
- * either its own content changed, or the terminal has dirtied rows the panel covers.
- * term_dirty is term.dirty; must be read BEFORE drawregion() clears the flags. */
+/* Returns 1 if the panel overlay must be redrawn this frame: either its own content
+ * changed, or the terminal has dirtied rows the panel covers. term_dirty is term.dirty;
+ * must be read BEFORE drawregion() clears the flags. */
 int panel_needs_draw(const int* term_dirty);
 
 /* Paint the panel overlay via xdrawline(). No-op if not visible. */

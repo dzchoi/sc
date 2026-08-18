@@ -9,6 +9,8 @@
 
 #include <algorithm>            // for std::any_of(), std::lower_bound(), ...
 #include <cassert>              // for assert()
+#include <cerrno>               // for errno, EINTR
+#include <chrono>               // for std::chrono::steady_clock
 #include <cstdint>              // for uint32_t
 #include <cstring>              // for std::strcmp(), std::memcpy(), ...
 #include <ctime>                // for localtime_r(), std::strftime()
@@ -19,6 +21,7 @@
 
 #include <dirent.h>             // for DIR, opendir(), ...
 #include <limits.h>             // for PATH_MAX
+#include <poll.h>               // for poll(), pollfd, POLLIN, ...
 #include <sys/stat.h>           // for struct stat, lstat(), ...
 #include <sys/types.h>          // for pid_t, ssize_t
 #include <termios.h>            // for tcgetpgrp()
@@ -132,10 +135,7 @@ std::pair<std::string, std::string> format_mtime(time_t mtime)
 
 bool Panel::visible() const
 {
-    // Todo: Instead of checking zsh_ready_ everytime, we would better wait for it during
-    // initialization, and fail SC with an error message if it times out.
-    return zsh_ready_ && shell_owns_tty_ && !hidden_
-        && canvas_.width() > 0 && canvas_.height() > 0;
+    return shell_owns_tty_ && !hidden_ && canvas_.width() > 0 && canvas_.height() > 0;
 }
 
 void Panel::recompute_geometry()
@@ -407,6 +407,39 @@ void Panel::init(int pty_fd, pid_t shell_pid)
 {
     pty_fd_ = pty_fd;
     shell_pid_ = shell_pid;
+
+    const auto deadline = std::chrono::steady_clock::now()
+        + std::chrono::milliseconds(kZshReadyTimeoutMs);
+    struct pollfd pfd{pty_fd_, POLLIN, 0};
+    while ( !zsh_ready_ ) {
+        const auto now = std::chrono::steady_clock::now();
+        if ( now >= deadline )
+            die("SC zsh adapter did not report readiness within %d ms; "
+                "source sc.zsh from ~/.zshrc\n", kZshReadyTimeoutMs);
+
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - now).count();
+        const int timeout_ms = static_cast<int>(std::max<int64_t>(1, remaining));
+        pfd.revents = 0;
+        const int result = ::poll(&pfd, 1, timeout_ms);
+        if ( result < 0 ) {
+            if ( errno == EINTR ) continue;
+            die("waiting for SC zsh adapter failed: %s\n", std::strerror(errno));
+        }
+        if ( result == 0 ) continue;
+        if ( pfd.revents & POLLNVAL )
+            die("waiting for SC zsh adapter failed: invalid PTY descriptor\n");
+
+        // Preserve all startup output and let st's existing parser recognize OSC 6770.
+        if ( pfd.revents & (POLLIN | POLLERR | POLLHUP) )
+            ttyread();
+    }
+
+    // Read the authoritative startup state once. Normal polling begins only after the
+    // required adapter has installed all private ZLE bindings.
+    shell_owns_tty_ = (::tcgetpgrp(pty_fd_) == shell_pid_);
+    if ( std::string cwd = shell_cwd(); !cwd.empty() )
+        cwd_ = std::move(cwd);
     load_entries({});
 }
 
@@ -436,11 +469,6 @@ bool Panel::poll()
         }
     }
 
-    // Todo: Is this code necessary? Is it only because poll() can execute before
-    // notify_zsh_ready()?
-    // if ( !was_visible && now_visible )
-    //     refresh_prompt();
-
     return was_visible != now_visible;
 }
 
@@ -468,14 +496,6 @@ void Panel::resize(int cols, int rows)
     term_cols_ = cols;
     term_rows_ = rows;
     recompute_geometry();
-}
-
-void Panel::notify_zsh_ready()
-{
-    zsh_ready_ = true;
-    // Reconcile after shell startup in case its configuration changed directory before
-    // the adapter was loaded.
-    cwd_changed_ = true;
 }
 
 void Panel::refresh_prompt()

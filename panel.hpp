@@ -58,32 +58,18 @@ public:
 
     void init(int pty_fd, pid_t shell_pid);
 
-    // Synchronize panel state derived from the shell. Returns true when panel visibility
-    // changed; the caller must then dirty terminal rows so covered content is restored
-    // or the newly visible overlay is repainted.
     bool poll();
-
-    // Whether the visible overlay must be redrawn. Returns true for panel-state changes
-    // or terminal damage within the panel rectangle. Read term_dirty before drawregion()
-    // clears its flags.
     bool needs_draw(const int* term_dirty) const;
-
-    // Paint the panel overlay via xdrawline(). No-op if not visible.
     void draw();
 
     void resize(int cols, int rows);
     static void set_cursor(int y) { cursor_y_ = y; }
 
-    // Enables SC’s private ZLE key events.
-    void notify_zsh_ready();
+    void notify_zsh_ready() { zsh_ready_ = true; }
     void notify_cwd_changed() { cwd_changed_ = true; }
     void refresh_prompt();
 
-    // User hit Ctrl+O.
     void toggle_panel();
-
-    // Route a key press. Returns true if the panel consumed it. Returns false for keys
-    // that should flow to the shell.
     bool handle_key(unsigned long ksym, unsigned state, const char* buf, int len);
 
 private:

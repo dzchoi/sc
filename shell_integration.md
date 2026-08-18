@@ -44,11 +44,14 @@ Startup proceeds as follows:
 3. `ttynew()` exports its path as `SC_SOCKET`; the child zsh inherits it.
 4. The child zsh reads `.zshrc`, sources `sc.zsh`, installs ZLE widgets and
    bindings, then emits OSC `6770`.
-5. `st.c:strhandle()` handles OSC `6770` with `panel_notify_zsh_ready()`.
-6. `Panel::notify_zsh_ready()` enables SC's private ZLE events.
+5. `Panel::init()` reads startup output through the normal terminal parser while waiting
+   up to one second for the adapter.
+6. `st.c:strhandle()` handles OSC `6770` with `panel_notify_zsh_ready()`, completing
+   initialization before the normal event loop begins.
 
-The readiness handshake prevents SC from sending its private sequences to a
-shell that has not loaded the adapter.
+The readiness handshake establishes that the adapter is available before panel polling,
+IPC service, or input handling begins. SC exits with a configuration error if the
+mandatory adapter does not report readiness within the deadline.
 
 ## Panel keys and ZLE
 

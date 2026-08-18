@@ -35,9 +35,44 @@ So panel_poll() is called:
 
 * Rename data members: dirty_ -> m_dirty, ...
 
+* View and Edit
+  ```
+  _sc_run_selected() {
+      local action=$1
+      _sc_get_selected_entry || return
+
+      local -a command
+      case $action in
+          view)
+              [[ $_sc_selected_entry_kind == F ]] || return
+              command=("${PAGER:-less}")
+              ;;
+          edit)
+              [[ $_sc_selected_entry_kind == F ]] || return
+              command=("${EDITOR:-vi}")
+              ;;
+          *)
+              return 1
+              ;;
+      esac
+
+      zle -I
+      command "${command[@]}" -- "$PWD/$REPLY"
+      zle reset-prompt
+  }
+
+  _sc_view() {
+      _sc_run_selected view
+  }
+
+  _sc_edit() {
+      _sc_run_selected edit
+  }
+  ```
+
 #### Appearance
-  - No icon
-  - Symlinks
+  - Application icon
+  - Handle Symlinks and consider permissions
   - Display the expanded value of history expansions (e.g. !!, !^, etc.) inline.
   - History selection menu.
   - Hangul typing shows a combination box.

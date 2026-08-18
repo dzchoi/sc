@@ -27,6 +27,10 @@ constexpr int kFracWidth    = 2;   // panel takes half of terminal cols
 constexpr int kMinRows      = 12;  // minimum terminal rows to show the panel
 constexpr int kMinCols      = 80;  // minimum terminal cols to show the panel
 
+// The required zsh adapter must finish installing its widgets before Panel::init()
+// returns and normal input handling begins.
+constexpr int kZshReadyTimeoutMs = 1000;
+
 static_assert(kFracWidth == 2);
 
 // ----- colors (indices into the 256-color palette) --------------------------
