@@ -22,18 +22,11 @@ So panel_poll() is called:
   - Once per blink tick (every blinktimeout ms = 800 ms by default), if any blinking text is visible.
 
 ### To-do
-* Declare the cursor being covered when located in any column within panel rows.
-  - Seems not working.
-
-* /tmp/sc-* should be cleaned up. And $XDG_RUNTIME_DIR/sc-XXXXXX should be preferred.
-
 * The legacy tty* function names in st.c are upstream API names and can remain. But new comments, fields, and docs should say “PTY” for transport/process-group details and “terminal” only for emulator/UI concepts. For example,
   ```
   // Show the overlay only while the shell owns the PTY's foreground process group.
   shell_owns_tty_ = (::tcgetpgrp(pty_fd_) == shell_pid_);
   ```
-
-* Rename data members: dirty_ -> m_dirty, ...
 
 * View and Edit
   ```
@@ -71,8 +64,10 @@ So panel_poll() is called:
   ```
 
 #### Appearance
+  - `less` with a file that is less than the screen height does not show the file content aligned at the top. It look to align at the bottom.
   - Application icon
   - `static unsigned int rows = 54` in config.h seems adjusting according to the terminal screen height. However, snap to the screen boundary without extra pixels.
+  - Use '~' instead of '/home/stem' in the title.
   - Handle Symlinks and consider permissions
   - `history` selection menu.
   - Hangul typing shows a combination box.

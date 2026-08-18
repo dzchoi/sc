@@ -30,11 +30,12 @@ public:
     void service(const Panel& panel);
 
 private:
-    inline static constexpr char kDirectoryTemplate[] = "/tmp/sc-XXXXXX";
+    inline static constexpr char kTmpDirectory[] = "/tmp";
+    inline static constexpr char kDirectoryName[] = "sc-XXXXXX";
     inline static constexpr char kSocketName[] = "/control";
 
     pid_t m_owner = 0;
     int m_fd = -1;
-    char m_directory[sizeof(kDirectoryTemplate)]{};
+    char m_directory[sizeof(sockaddr_un{}.sun_path)]{};
     sockaddr_un m_address{};
 };

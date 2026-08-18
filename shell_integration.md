@@ -40,8 +40,8 @@ parent shell before launching SC: the condition is false there.
 Startup proceeds as follows:
 
 1. `st.c:ttynew()` calls `panel_preinit()` before it forks.
-2. `Panel::preinit()` creates an owner-only Unix socket in a private `/tmp/sc-*`
-   directory.
+2. `Panel::preinit()` creates an owner-only Unix socket in a private `sc-*` directory
+   under `$XDG_RUNTIME_DIR`, or under `/tmp` when the runtime directory is unavailable.
 3. `ttynew()` exports its path as `SC_SOCKET`; the child zsh inherits it.
 4. The child zsh reads `.zshrc`, sources `sc.zsh`, installs ZLE widgets and
    bindings, then emits OSC `6770`.
@@ -99,6 +99,10 @@ Normal `exit()` paths release it through `Ipc`'s destructor. The `SIGCHLD` path 
 the same idempotent cleanup explicitly before `_exit()`; that cleanup uses only
 async-signal-safe system calls. The forked shell cannot close or unlink the parent's
 socket through its inherited `Ipc` state.
+
+`$XDG_RUNTIME_DIR` is preferred because it is private to the logged-in user and intended
+for runtime sockets. SC falls back to its owner-only directory under `/tmp` when that
+variable is absent, relative, unusable, or too long for a Unix-domain socket address.
 
 ## Cwd update path
 

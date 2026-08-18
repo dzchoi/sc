@@ -2,6 +2,7 @@
 
 #include <cerrno>               // for errno
 #include <charconv>             // for std::from_chars()
+#include <cstdlib>              // for std::getenv()
 #include <cstring>              // for std::memcpy(), std::strcmp(), ...
 #include <string>               // for std::string, std::to_string()
 
@@ -37,15 +38,27 @@ const char* Ipc::init()
 {
     if ( m_fd >= 0 ) return m_address.sun_path;
 
-    static_assert(sizeof(kDirectoryTemplate) + sizeof(kSocketName) - 1
-        <= sizeof(m_address.sun_path), "SC control socket path exceeds sockaddr_un");
-
     m_owner = ::getpid();
-    std::memcpy(m_directory, kDirectoryTemplate, sizeof(m_directory));
 
-    if ( !::mkdtemp(m_directory) ) {
+    const auto create_directory = [this](const char* base) {
+        size_t base_length = std::strlen(base);
+        const size_t separator_length = base[base_length - 1] != '/';
+        if ( sizeof(m_directory) < base_length + separator_length
+          + sizeof(kDirectoryName) + sizeof(kSocketName) - 1 )
+            return false;
+
+        std::memcpy(m_directory, base, base_length);
+        if ( separator_length ) m_directory[base_length++] = '/';
+        std::memcpy(m_directory + base_length, kDirectoryName, sizeof(kDirectoryName));
+        return ::mkdtemp(m_directory) != nullptr;
+    };
+
+    const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR");  // "/run/user/$UID/"
+    const bool created_in_runtime = runtime_dir && create_directory(runtime_dir);
+    if ( !created_in_runtime && !create_directory(kTmpDirectory) ) {
+        const int error = errno;
         m_directory[0] = '\0';
-        die("mkdtemp for SC control socket failed: %s\n", std::strerror(errno));
+        die("mkdtemp for SC control socket failed: %s\n", std::strerror(error));
     }
 
     m_fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
