@@ -88,47 +88,47 @@ int ext_len(int dot_idx, int n)
 
 
 Draw::Draw(Canvas& canvas)
-: canvas_(canvas), span_(canvas_.width_)
+: m_canvas(canvas), m_span(m_canvas.m_width)
 {}
 
 Draw& Draw::put(Rune u, ushort mode)
 {
-    assert( y_ >= 0 && y_ < canvas_.height_ && x_ >= 0 && x_ < canvas_.width_ );
-    canvas_.cell(y_, x_++) = Glyph{u, mode, fg_, bg_};
+    assert( m_y >= 0 && m_y < m_canvas.m_height && m_x >= 0 && m_x < m_canvas.m_width );
+    m_canvas.cell(m_y, m_x++) = Glyph{u, mode, m_fg, m_bg};
     return *this;
 }
 
 Draw& Draw::fill(Rune u, ushort mode)
 {
-    assert( y_ >= 0 && y_ < canvas_.height_ );
-    const int xend = std::min(x_ + span_, canvas_.width_);
-    while ( x_ < xend )
-        canvas_.cell(y_, x_++) = Glyph{u, mode, fg_, bg_};
+    assert( m_y >= 0 && m_y < m_canvas.m_height );
+    const int xend = std::min(m_x + m_span, m_canvas.m_width);
+    while ( m_x < xend )
+        m_canvas.cell(m_y, m_x++) = Glyph{u, mode, m_fg, m_bg};
 
-    span_ = canvas_.width_;
-    // Note: align_ is not cleared.
+    m_span = m_canvas.m_width;
+    // Note: m_align is not cleared.
     return *this;
 }
 
 bool Draw::put_left_ellipsized(std::string_view s, int xend, ushort mode)
 {
-    if ( xend <= x_ ) return false;
+    if ( xend <= m_x ) return false;
 
     int dot_cp_idx;
     ptrdiff_t dot_byte_off;
     const int n_cps = scan_ext(s, &dot_cp_idx, &dot_byte_off);
-    const int span = xend - x_;
+    const int span = xend - m_x;
     if ( n_cps <= span ) return false;  // fits; let the caller stream it normally
 
     // Doesn't fit: emit a prefix, an ellipsis, and (if Keep::Both and short enough) the
     // extension minus its dot, all in a single left-to-right pass.
-    bool keep_ext = false;
+    bool m_keepext = false;
     int l_prefix = span - 1;  // budget with ellipsis only
-    if ( keep_ == Keep::Both ) {
+    if ( m_keep == Keep::Both ) {
         const int l_ext = ext_len(dot_cp_idx, n_cps);
         const int budget = span - l_ext - 1;  // ellipsis + extension
         if ( budget >= 0 ) {
-            keep_ext = true;
+            m_keepext = true;
             l_prefix = budget;
         }
     }
@@ -138,17 +138,17 @@ bool Draw::put_left_ellipsized(std::string_view s, int xend, ushort mode)
     for ( int i = 0 ; i < l_prefix && p < pend ; ++i ) {
         Rune u;
         p += utf8_next(p, pend, &u);
-        canvas_.cell(y_, x_++) = Glyph{u, mode, fg_, bg_};
+        m_canvas.cell(m_y, m_x++) = Glyph{u, mode, m_fg, m_bg};
     }
 
-    canvas_.cell(y_, x_++) = Glyph{kEllipsis, mode, fg_, bg_};
+    m_canvas.cell(m_y, m_x++) = Glyph{kEllipsis, mode, m_fg, m_bg};
 
-    if ( keep_ext ) {
+    if ( m_keepext ) {
         p = reinterpret_cast<const unsigned char*>(s.data()) + dot_byte_off + 1;  // skip '.'
-        while ( p < pend && x_ < xend ) {
+        while ( p < pend && m_x < xend ) {
             Rune u;
             p += utf8_next(p, pend, &u);
-            canvas_.cell(y_, x_++) = Glyph{u, mode, fg_, bg_};
+            m_canvas.cell(m_y, m_x++) = Glyph{u, mode, m_fg, m_bg};
         }
     }
     return true;
@@ -156,36 +156,36 @@ bool Draw::put_left_ellipsized(std::string_view s, int xend, ushort mode)
 
 Draw& Draw::put(std::string_view s, ushort mode)
 {
-    assert( y_ >= 0 && y_ < canvas_.height_ );
+    assert( m_y >= 0 && m_y < m_canvas.m_height );
 
-    // Fast-forward x_ to to_x, clearing cells with ' ' along the way if ATTR_CLEAR_FIELD
+    // Fast-forward m_x to to_x, clearing cells with ' ' along the way if ATTR_CLEAR_FIELD
     // is set in the mode.
     auto skip_or_fill = [&](int to_x) {
         if ( (mode & ATTR_CLEAR_FIELD) != 0 )
-            while ( x_ < to_x ) {
-                Glyph& g = canvas_.cell(y_, x_++);
+            while ( m_x < to_x ) {
+                Glyph& g = m_canvas.cell(m_y, m_x++);
                 g.u = ' ';
                 g.mode = mode;
-                g.fg = fg_;
-                g.bg = bg_;
+                g.fg = m_fg;
+                g.bg = m_bg;
             }
         else
-            x_ = to_x;
+            m_x = to_x;
     };
 
-    const int xend = std::min(x_ + span_, canvas_.width_);
+    const int xend = std::min(m_x + m_span, m_canvas.m_width);
     const unsigned char* p = reinterpret_cast<const unsigned char*>(s.data());
     const unsigned char* pend = p + s.size();
 
-    if ( align_ == Align::Left && keep_ != Keep::Mid && keep_ != Keep::Right ) {
+    if ( m_align == Align::Left && m_keep != Keep::Mid && m_keep != Keep::Right ) {
         // A Left field with at most a single trailing ellipsis (Keep::Default/Left/Both)
         // can be streamed glyph-by-glyph; we never need to know its total width up
         // front.
-        if ( keep_ == Keep::Default || !put_left_ellipsized(s, xend, mode) ) {
-            while ( p < pend && x_ < xend ) {
+        if ( m_keep == Keep::Default || !put_left_ellipsized(s, xend, mode) ) {
+            while ( p < pend && m_x < xend ) {
                 Rune u;
                 p += utf8_next(p, pend, &u);
-                canvas_.cell(y_, x_++) = Glyph{u, mode, fg_, bg_};
+                m_canvas.cell(m_y, m_x++) = Glyph{u, mode, m_fg, m_bg};
             }
         }
 
@@ -200,38 +200,38 @@ Draw& Draw::put(std::string_view s, ushort mode)
         while ( p < pend ) {
             Rune u;
             p += utf8_next(p, pend, &u);
-            buf.push_back(Glyph{u, mode, fg_, bg_});
+            buf.push_back(Glyph{u, mode, m_fg, m_bg});
         }
 
         const int n = static_cast<int>(buf.size());
-        const int span = xend - x_;
+        const int span = xend - m_x;
         if ( n <= span ) {
-            // Fits: position within the field per align_; ellipsize() only matters on
+            // Fits: position within the field per m_align; ellipsize() only matters on
             // overflow.
             int lead = span - n;
-            if ( align_ == Align::Left ) lead = 0;
-            else if ( align_ == Align::Mid ) lead /= 2;
-            skip_or_fill(x_ + lead);
-            for ( const Glyph& g : buf ) canvas_.cell(y_, x_++) = g;
+            if ( m_align == Align::Left ) lead = 0;
+            else if ( m_align == Align::Mid ) lead /= 2;
+            skip_or_fill(m_x + lead);
+            for ( const Glyph& g : buf ) m_canvas.cell(m_y, m_x++) = g;
         }
 
-        else if ( keep_ == Keep::Default ) {
-            // Overflow, no ellipsis: hard-cut per align_'s own implicit direction.
+        else if ( m_keep == Keep::Default ) {
+            // Overflow, no ellipsis: hard-cut per m_align's own implicit direction.
             // (Align::Left never reaches here with Keep::Default - see above.)
-            const int skip = (align_ == Align::Right) ? n - span : (n - span) / 2;
-            for ( int i = skip ; i < n && x_ < xend ; ++i )
-                canvas_.cell(y_, x_++) = buf[i];
+            const int skip = (m_align == Align::Right) ? n - span : (n - span) / 2;
+            for ( int i = skip ; i < n && m_x < xend ; ++i )
+                m_canvas.cell(m_y, m_x++) = buf[i];
         }
 
         else {
-            // Overflow, ellipsized: keep_ decides the cut on its own, regardless of
-            // align_.
-            const bool head_cut = (keep_ == Keep::Right || keep_ == Keep::Mid);
+            // Overflow, ellipsized: m_keep decides the cut on its own, regardless of
+            // m_align.
+            const bool head_cut = (m_keep == Keep::Right || m_keep == Keep::Mid);
             const bool tail_cut =
-                (keep_ == Keep::Left || keep_ == Keep::Mid || keep_ == Keep::Both);
+                (m_keep == Keep::Left || m_keep == Keep::Mid || m_keep == Keep::Both);
 
             int ext_idx = -1, l_ext = 0;  // Keep::Both: index/length of a kept extension
-            if ( keep_ == Keep::Both ) {
+            if ( m_keep == Keep::Both ) {
                 int dot_idx = -1;
                 for ( int i = 0 ; i < n ; ++i )
                     if ( buf[i].u == '.' ) dot_idx = i;
@@ -243,18 +243,18 @@ Draw& Draw::put(std::string_view s, ushort mode)
             int budget = span - head_cut - tail_cut - l_ext;
             if ( budget < 0 ) budget = 0;
             const int start =
-                (keep_ == Keep::Right) ? n - budget :
-                (keep_ == Keep::Mid) ? (n - budget) / 2 : 0;
+                (m_keep == Keep::Right) ? n - budget :
+                (m_keep == Keep::Mid) ? (n - budget) / 2 : 0;
 
-            if ( head_cut && x_ < xend )
-                canvas_.cell(y_, x_++) = Glyph{kEllipsis, mode, fg_, bg_};
-            for ( int i = 0 ; i < budget && x_ < xend ; ++i )
-                canvas_.cell(y_, x_++) = buf[start + i];
-            if ( tail_cut && x_ < xend ) {
-                canvas_.cell(y_, x_++) = Glyph{kEllipsis, mode, fg_, bg_};
+            if ( head_cut && m_x < xend )
+                m_canvas.cell(m_y, m_x++) = Glyph{kEllipsis, mode, m_fg, m_bg};
+            for ( int i = 0 ; i < budget && m_x < xend ; ++i )
+                m_canvas.cell(m_y, m_x++) = buf[start + i];
+            if ( tail_cut && m_x < xend ) {
+                m_canvas.cell(m_y, m_x++) = Glyph{kEllipsis, mode, m_fg, m_bg};
                 if ( ext_idx >= 0 )
-                    for ( int i = ext_idx ; i < n && x_ < xend ; ++i )
-                        canvas_.cell(y_, x_++) = buf[i];
+                    for ( int i = ext_idx ; i < n && m_x < xend ; ++i )
+                        m_canvas.cell(m_y, m_x++) = buf[i];
             }
         }
 
@@ -262,9 +262,9 @@ Draw& Draw::put(std::string_view s, ushort mode)
     }
 
     // Reset the field state.
-    align_ = Align::Left;
-    span_ = canvas_.width_;
-    keep_ = Keep::Default;
+    m_align = Align::Left;
+    m_span = m_canvas.m_width;
+    m_keep = Keep::Default;
     return *this;
 }
 
@@ -272,23 +272,23 @@ Draw& Draw::put(std::string_view s, ushort mode)
 
 void Canvas::reset(int top, int left, int width, int height, int term_cols)
 {
-    top_ = top;
-    left_ = left;
-    width_ = width;
-    height_ = height;
-    term_cols_ = term_cols;
+    m_top = top;
+    m_left = left;
+    m_width = width;
+    m_height = height;
+    m_term_cols = term_cols;
 
     // The buffer only ever grows; it never shrinks. This prevents unnecessary
     // reallocations when the panel is toggled between hidden and visible states.
-    const size_t need = static_cast<size_t>(height_) * term_cols_;
-    if ( need > linebuf_.size() ) linebuf_.resize(need);
+    const size_t need = static_cast<size_t>(m_height) * m_term_cols;
+    if ( need > m_linebuf.size() ) m_linebuf.resize(need);
 }
 
 void Canvas::present()
 {
-    for ( int y = 0 ; y < height_ ; ++y )
+    for ( int y = 0 ; y < m_height ; ++y )
         // Draw the corresponding segment of row_ptr(y) into columns
-        // [left_, left_ + width_) for each terminal row in the range
-        // [top_, top_ + height_).
-        xdrawline(row_ptr(y), left_, top_ + y, left_ + width_);
+        // [m_left, m_left + m_width) for each terminal row in the range
+        // [m_top, m_top + m_height).
+        xdrawline(row_ptr(y), m_left, m_top + y, m_left + m_width);
 }

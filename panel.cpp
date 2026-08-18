@@ -135,7 +135,7 @@ std::pair<std::string, std::string> format_mtime(time_t mtime)
 
 bool Panel::visible() const
 {
-    return shell_owns_tty_ && !hidden_ && canvas_.width() > 0 && canvas_.height() > 0;
+    return m_shell_owns_tty && !m_hidden && m_canvas.width() > 0 && m_canvas.height() > 0;
 }
 
 void Panel::recompute_geometry()
@@ -143,46 +143,46 @@ void Panel::recompute_geometry()
     // Panel shows only when the terminal has room for both the panel and the shell.
     // kMinRows and kMinCols are the minimum terminal dimensions (each half gets at
     // least kMinRows/kFracHeight rows and kMinCols/kFracWidth cols).
-    if ( term_rows_ < kMinRows || term_cols_ < kMinCols ) {
-        canvas_.reset(0, 0, 0, 0, term_cols_);
+    if ( m_term_rows < kMinRows || m_term_cols < kMinCols ) {
+        m_canvas.reset(0, 0, 0, 0, m_term_cols);
         return;
     }
 
     const int top = 0;
-    const int width = term_cols_ - term_cols_ / kFracWidth;  // half the terminal
-    const int height = term_rows_ - term_rows_ / kFracHeight;
-    const int left = term_cols_ - width;          // top-right placement
+    const int width = m_term_cols - m_term_cols / kFracWidth;  // half the terminal
+    const int height = m_term_rows - m_term_rows / kFracHeight;
+    const int left = m_term_cols - width;          // top-right placement
     assert( height >= kMinRowsPanel );
     compute_cols(width);
 
-    canvas_.reset(top, left, width, height, term_cols_);
-    dirty_ = true;
+    m_canvas.reset(top, left, width, height, m_term_cols);
+    m_dirty = true;
 }
 
 void Panel::load_entries(const struct stat& prev_dir_stat)
 {
-    entries_.clear();
+    m_entries.clear();
 
     // Manually add ".." as the first entry in case the filesystem's readdir() does not
     // enumerate it.
     Entry dotdot{"..", true, 0};
     struct stat st{};
     bool matched = false;
-    if ( ::lstat((cwd_ + "..").c_str(), &st) == 0 ) {
+    if ( ::lstat((m_cwd + "..").c_str(), &st) == 0 ) {
         dotdot.size  = st.st_size;
         dotdot.mtime = st.st_mtime;
         matched = (st.st_dev == prev_dir_stat.st_dev && st.st_ino == prev_dir_stat.st_ino);
-        if ( matched ) selected_idx_ = 0;
+        if ( matched ) m_selected_idx = 0;
     }
-    entries_.push_back(std::move(dotdot));
+    m_entries.push_back(std::move(dotdot));
 
-    if ( DIR* d = ::opendir(cwd_.c_str()) ) {
+    if ( DIR* d = ::opendir(m_cwd.c_str()) ) {
         while ( auto* de = ::readdir(d) ) {
             if ( std::strcmp(de->d_name, ".")  == 0 ) continue;
             if ( std::strcmp(de->d_name, "..") == 0 ) continue;
             Entry e;
             e.name = de->d_name;
-            const std::string full = cwd_ + e.name;
+            const std::string full = m_cwd + e.name;
             struct stat st{};  // zeroed each iteration in case lstat() below fails.
             if ( ::lstat(full.c_str(), &st) == 0 ) {
                 e.is_dir = S_ISDIR(st.st_mode);
@@ -191,24 +191,24 @@ void Panel::load_entries(const struct stat& prev_dir_stat)
             }
 
             // Insert `e` at its sorted position (".." first, then dirs, then files).
-            auto it = std::lower_bound(entries_.begin(), entries_.end(), e,
+            auto it = std::lower_bound(m_entries.begin(), m_entries.end(), e,
                 [](const Entry& a, const Entry& b) {
                     if ( a.name == ".." ) return true;
                     if ( b.name == ".." ) return false;
                     if ( a.is_dir != b.is_dir ) return a.is_dir;
                     return a.name < b.name;
                 });
-            const int idx = static_cast<int>(it - entries_.begin());
-            entries_.emplace(it, std::move(e));
+            const int idx = static_cast<int>(it - m_entries.begin());
+            m_entries.emplace(it, std::move(e));
 
             if ( matched ) {
-                // Any later insertion landing at or before selected_idx_ shifts
-                // selected_idx_ one slot to the right.
-                if ( idx <= selected_idx_ ) ++selected_idx_;
+                // Any later insertion landing at or before m_selected_idx shifts
+                // m_selected_idx one slot to the right.
+                if ( idx <= m_selected_idx ) ++m_selected_idx;
             }
             else {
                 matched = (st.st_dev == prev_dir_stat.st_dev && st.st_ino == prev_dir_stat.st_ino);
-                if ( matched ) selected_idx_ = idx;
+                if ( matched ) m_selected_idx = idx;
             }
         }
 
@@ -217,21 +217,21 @@ void Panel::load_entries(const struct stat& prev_dir_stat)
     // The case `d == nullptr` can happen when the current directory is deleted or
     // permission-changed while we are still in it.
 
-    // Fall back to the old selected_idx_ if prev_dir_stat was not found (e.g. after a same-dir
+    // Fall back to the old m_selected_idx if prev_dir_stat was not found (e.g. after a same-dir
     // reload, or if the target no longer exists).
     if ( !matched ) {
-        const int n = static_cast<int>(entries_.size());
-        selected_idx_ = clamp_between(selected_idx_, 0, std::max(0, n - 1));
+        const int n = static_cast<int>(m_entries.size());
+        m_selected_idx = clamp_between(m_selected_idx, 0, std::max(0, n - 1));
     }
-    first_visible_idx_ = 0;
-    dirty_ = true;
+    m_first_visible_idx = 0;
+    m_dirty = true;
 }
 
 std::string Panel::shell_cwd()
 {
     char buf[PATH_MAX];
     char proc[32];
-    std::snprintf(proc, sizeof(proc), "/proc/%d/cwd", static_cast<int>(shell_pid_));
+    std::snprintf(proc, sizeof(proc), "/proc/%d/cwd", static_cast<int>(m_shell_pid));
     ssize_t n = ::readlink(proc, buf, sizeof(buf) - 1);
     if ( n <= 0 ) return {};
     return with_trailing_slash(std::string(buf, n));
@@ -239,16 +239,16 @@ std::string Panel::shell_cwd()
 
 void Panel::render()
 {
-    const int width  = canvas_.width();
-    const int height = canvas_.height();
+    const int width  = m_canvas.width();
+    const int height = m_canvas.height();
     if ( width <= 0 || height <= 0 ) return;
-    if ( !dirty_ ) return;
-    dirty_ = false;
+    if ( !m_dirty ) return;
+    m_dirty = false;
 
     const int list_rows = height - kRowsPanelFrame;  // excludes header and footer.
     const uint32_t fg = kFgDefault;
     const uint32_t bg = kBgDefault;
-    auto draw = std::move(canvas_.draw());
+    auto draw = std::move(m_canvas.draw());
 
     // --- Row 0: top frame + title ---
     draw.move(0, 0).color(kFgFrame, bg).fill(kFrameH)
@@ -257,7 +257,7 @@ void Panel::render()
         .move(column.date_x - 1).put(kFrameTT)
         .move(column.time_x - 1).put(kFrameTT)
         .move(width - 1).put(kFrameTR)
-        .move(1).mid(width - 2).ellipsize(Draw::Keep::Right).put(cwd_, ATTR_REVERSE);
+        .move(1).mid(width - 2).ellipsize(Draw::Keep::Right).put(m_cwd, ATTR_REVERSE);
 
     // --- Row 1: column headers ---
     draw.move(0, 1).color(kFgFrame, bg).fill(' ')
@@ -276,19 +276,19 @@ void Panel::render()
         .put(kFrameV);
 
     // Keep cursor in view.
-    if ( selected_idx_ < first_visible_idx_ )
-        first_visible_idx_ = selected_idx_;
-    if ( selected_idx_ >= first_visible_idx_ + list_rows )
-        first_visible_idx_ = selected_idx_ - list_rows + 1;
-    if ( first_visible_idx_ < 0 )
-        first_visible_idx_ = 0;
+    if ( m_selected_idx < m_first_visible_idx )
+        m_first_visible_idx = m_selected_idx;
+    if ( m_selected_idx >= m_first_visible_idx + list_rows )
+        m_first_visible_idx = m_selected_idx - list_rows + 1;
+    if ( m_first_visible_idx < 0 )
+        m_first_visible_idx = 0;
 
     // --- Rows 2 .. height-4: entries ---
     for ( int i = 0 ; i < list_rows ; ++i ) {
         const int y = 2 + i;  // skip over the header.
-        const int idx = first_visible_idx_ + i;
+        const int idx = m_first_visible_idx + i;
 
-        if ( idx < 0 || idx >= static_cast<int>(entries_.size()) ) {
+        if ( idx < 0 || idx >= static_cast<int>(m_entries.size()) ) {
             draw.move(0, y).color(fg, bg).fill(' ')  // Clear the line first.
                 .move(0).color(kFgFrame).put(kFrameV)
                 .move(column.size_x - 1).put(kFrameV)
@@ -298,25 +298,25 @@ void Panel::render()
             continue;
         }
 
-        const bool selected = (idx == selected_idx_);
+        const bool selected = (idx == m_selected_idx);
         const ushort mode = selected
             ? ATTR_REVERSE | ATTR_CLEAR_FIELD : ATTR_CLEAR_FIELD;
         // The selected row's frame follows its text colour; other frames stay dim.
-        const uint32_t fg_text  = fg;
-        const uint32_t fg_frame = selected ? fg : kFgFrame;
+        const uint32_t m_fgtext  = fg;
+        const uint32_t m_fgframe = selected ? fg : kFgFrame;
 
-        const Entry& e = entries_[idx];
+        const Entry& e = m_entries[idx];
         auto [date, time] = format_mtime(e.mtime);
 
         // Draw row frame.
         draw.move(0, y)
-            .color(kFgFrame, bg).put(kFrameV).color(fg_text)
+            .color(kFgFrame, bg).put(kFrameV).color(m_fgtext)
 
             // Name column (abbreviated to fit or left-aligned)
             .left(column.name_w).ellipsize(Draw::Keep::Both).put(
                 e.name + (e.is_dir ? "/" : "")
                 , mode)
-            .with_fg(fg_frame, [&](Draw& d){ d.put(kFrameV, mode); })
+            .with_fg(m_fgframe, [&](Draw& d){ d.put(kFrameV, mode); })
 
             // Size column (right-aligned)
             .right(column.size_w).put(
@@ -324,11 +324,11 @@ void Panel::render()
                 ? (e.name == "..") ? "UP--DIR" : "SUB-DIR"
                 : format_size(e.size)
                 , mode)
-            .with_fg(fg_frame, [&](Draw& d){ d.put(kFrameV, mode); })
+            .with_fg(m_fgframe, [&](Draw& d){ d.put(kFrameV, mode); })
 
             // Date column
             .right(column.date_w).put(date, mode)
-            .with_fg(fg_frame, [&](Draw& d){ d.put(kFrameV, mode); })
+            .with_fg(m_fgframe, [&](Draw& d){ d.put(kFrameV, mode); })
 
             // Time column
             .right(column.time_w).put(time, mode)
@@ -344,7 +344,7 @@ void Panel::render()
         .move(width - 1).put(kFrameRT);
 
     // Row -2: selected entry
-    const Entry& e = entries_[selected_idx_];
+    const Entry& e = m_entries[m_selected_idx];
     auto [date, time] = format_mtime(e.mtime);
     draw.move(0, height - 2).color(fg, bg).fill(' ')
         .move(0).with_fg(kFgFrame, [](Draw& d){ d.put(kFrameV); })
@@ -383,35 +383,35 @@ Panel::Panel()
     // The child shell inherits our current working directory (cwd) during the fork.
     char buf[PATH_MAX];
     // Cannot use shell_now() instead of getcwd() now until init() is called.
-    cwd_ = with_trailing_slash(::getcwd(buf, sizeof(buf)) ? buf : "");
+    m_cwd = with_trailing_slash(::getcwd(buf, sizeof(buf)) ? buf : "");
     recompute_geometry();
 }
 
 // Returns the total zsh-owned padding needed to place the prompt below the panel.
 int Panel::prompt_padding(int applied_padding) const
 {
-    const int prompt_y = std::max(0, cursor_y_ - applied_padding);
+    const int prompt_y = std::max(0, m_cursor_y - applied_padding);
     const bool cursor_obscured = visible()
-        && prompt_y >= canvas_.top() && prompt_y < canvas_.top() + canvas_.height();
-    return cursor_obscured ? canvas_.top() + canvas_.height() - prompt_y : 0;
+        && prompt_y >= m_canvas.top() && prompt_y < m_canvas.top() + m_canvas.height();
+    return cursor_obscured ? m_canvas.top() + m_canvas.height() - prompt_y : 0;
 }
 
 const Panel::Entry* Panel::selected_entry() const
 {
     if ( !visible() ) return nullptr;
-    assert( !entries_.empty() );
-    return &entries_[selected_idx_];
+    assert( !m_entries.empty() );
+    return &m_entries[m_selected_idx];
 }
 
 void Panel::init(int pty_fd, pid_t shell_pid)
 {
-    pty_fd_ = pty_fd;
-    shell_pid_ = shell_pid;
+    m_pty_fd = pty_fd;
+    m_shell_pid = shell_pid;
 
     const auto deadline = std::chrono::steady_clock::now()
         + std::chrono::milliseconds(kZshReadyTimeoutMs);
-    struct pollfd pfd{pty_fd_, POLLIN, 0};
-    while ( !zsh_ready_ ) {
+    struct pollfd pfd{m_pty_fd, POLLIN, 0};
+    while ( !m_zsh_ready ) {
         const auto now = std::chrono::steady_clock::now();
         if ( now >= deadline )
             die("SC zsh adapter did not report readiness within %d ms; "
@@ -437,29 +437,29 @@ void Panel::init(int pty_fd, pid_t shell_pid)
 
     // Read the authoritative startup state once. Normal polling begins only after the
     // required adapter has installed all private ZLE bindings.
-    shell_owns_tty_ = (::tcgetpgrp(pty_fd_) == shell_pid_);
+    m_shell_owns_tty = (::tcgetpgrp(m_pty_fd) == m_shell_pid);
     if ( std::string cwd = shell_cwd(); !cwd.empty() )
-        cwd_ = std::move(cwd);
+        m_cwd = std::move(cwd);
     load_entries({});
 }
 
 bool Panel::poll()
 {
-    assert( pty_fd_ >= 0 && shell_pid_ > 0 );  // also asserts that .init() was called.
+    assert( m_pty_fd >= 0 && m_shell_pid > 0 );  // also asserts that .init() was called.
     const bool was_visible = visible();
-    shell_owns_tty_ = (::tcgetpgrp(pty_fd_) == shell_pid_);
+    m_shell_owns_tty = (::tcgetpgrp(m_pty_fd) == m_shell_pid);
     const bool now_visible = visible();
 
     if ( now_visible ) {
         // zsh reports chpwd through the private OSC. Reconcile that event against the
         // shell's actual cwd via /proc.
-        if ( !was_visible || cwd_changed_ ) {
+        if ( !was_visible || m_cwd_changed ) {
             struct stat prev_dir_stat{};  // zero-initialized in case lstat() below fails.
-            cwd_changed_ = false;
-            if ( std::string cwd = shell_cwd(); !cwd.empty() && cwd != cwd_ ) {
-                ::lstat(cwd_.c_str(), &prev_dir_stat);
-                cwd_ = cwd;
-                selected_idx_ = 0;  // Reset selection on a long jump (e.g. "cd /").
+            m_cwd_changed = false;
+            if ( std::string cwd = shell_cwd(); !cwd.empty() && cwd != m_cwd ) {
+                ::lstat(m_cwd.c_str(), &prev_dir_stat);
+                m_cwd = cwd;
+                m_selected_idx = 0;  // Reset selection on a long jump (e.g. "cd /").
             }
 
             // If the shell's cwd changed, prev_dir_stat holds the stat of the directory
@@ -475,26 +475,26 @@ bool Panel::poll()
 bool Panel::needs_draw(const int* term_dirty) const
 {
     if ( !visible() ) return false;
-    if ( dirty_ ) return true;       // our own content changed
+    if ( m_dirty ) return true;       // our own content changed
 
     // Return true if terminal repainted a covered row.
     return std::any_of(
-        term_dirty + canvas_.top(),
-        term_dirty + canvas_.top() + canvas_.height(), 
+        term_dirty + m_canvas.top(),
+        term_dirty + m_canvas.top() + m_canvas.height(),
         [](int d) { return d != 0; });
 }
 
 void Panel::draw()
 {
     if ( !visible() ) return;
-    render();           // no-op unless dirty_
-    canvas_.present();  // re-blits over rows the terminal just redrew underneath us
+    render();           // no-op unless m_dirty
+    m_canvas.present();  // re-blits over rows the terminal just redrew underneath us
 }
 
 void Panel::resize(int cols, int rows)
 {
-    term_cols_ = cols;
-    term_rows_ = rows;
+    m_term_cols = cols;
+    m_term_rows = rows;
     recompute_geometry();
 }
 
@@ -506,54 +506,54 @@ void Panel::refresh_prompt()
 
 void Panel::toggle_panel()
 {
-    hidden_ = !hidden_;
-    dirty_ = true;
+    m_hidden = !m_hidden;
+    m_dirty = true;
     if ( visible() )
         refresh_prompt();
 }
 
 bool Panel::handle_key(unsigned long ksym, unsigned state, const char*, int)
 {
-    assert( selected_idx_ >= 0 );  // entries_[] is never empty (when visible()).
+    assert( m_selected_idx >= 0 );  // m_entries[] is never empty (when visible()).
     if ( !visible() ) return false;
-    const int list_rows = canvas_.height() - kRowsPanelFrame;
-    const int n = static_cast<int>(entries_.size());
-    const int old_selected_idx = selected_idx_;
+    const int list_rows = m_canvas.height() - kRowsPanelFrame;
+    const int n = static_cast<int>(m_entries.size());
+    const int old_selected_idx = m_selected_idx;
 
     // Note: Switch only expects non-printable keys.
     switch ( ksym ) {
         case XK_Up:
-            --selected_idx_;
+            --m_selected_idx;
             goto clamp_cursor;
         case XK_Down:
-            ++selected_idx_;
+            ++m_selected_idx;
             goto clamp_cursor;
         case XK_Home:
-            selected_idx_ = 0;
+            m_selected_idx = 0;
             goto clamp_cursor;
         case XK_End:
-            selected_idx_ = n - 1;
+            m_selected_idx = n - 1;
             goto clamp_cursor;
 
         case XK_Page_Up:
             if ( (state & ControlMask) == 0 ) {
-                selected_idx_ -= list_rows;
+                m_selected_idx -= list_rows;
                 goto clamp_cursor;
             }
             send_zle_event(ZleEvent::CdParent);
             return true;
         case XK_Page_Down:
             if ( (state & ControlMask) == 0 ) {
-                selected_idx_ += list_rows;
+                m_selected_idx += list_rows;
                 goto clamp_cursor;
             }
-            if ( entries_[selected_idx_].is_dir )
+            if ( m_entries[m_selected_idx].is_dir )
                 send_zle_event(ZleEvent::CdChild);
             return true;
 
         clamp_cursor:
-            selected_idx_ = clamp_between(selected_idx_, 0, std::max(0, n - 1));
-            dirty_ |= (old_selected_idx != selected_idx_);
+            m_selected_idx = clamp_between(m_selected_idx, 0, std::max(0, n - 1));
+            m_dirty |= (old_selected_idx != m_selected_idx);
             return true;
 
         case XK_Return:

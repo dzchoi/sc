@@ -72,9 +72,9 @@ So panel_poll() is called:
 
 #### Appearance
   - Application icon
+  - `static unsigned int rows = 54` in config.h seems adjusting according to the terminal screen height. However, snap to the screen boundary without extra pixels.
   - Handle Symlinks and consider permissions
-  - Display the expanded value of history expansions (e.g. !!, !^, etc.) inline.
-  - History selection menu.
+  - `history` selection menu.
   - Hangul typing shows a combination box.
   - `Panel::dirty_` for each panel row instead of the entire panel
 
@@ -89,7 +89,7 @@ So panel_poll() is called:
   - diff directories, ...
   - Show memory usage, ...
 
-#### Brief list
+#### Brief list panel
 
 #### Two panels
 

@@ -63,10 +63,10 @@ public:
     void draw();
 
     void resize(int cols, int rows);
-    static void set_cursor(int y) { cursor_y_ = y; }
+    static void set_cursor(int y) { m_cursor_y = y; }
 
-    void notify_zsh_ready() { zsh_ready_ = true; }
-    void notify_cwd_changed() { cwd_changed_ = true; }
+    void notify_zsh_ready() { m_zsh_ready = true; }
+    void notify_cwd_changed() { m_cwd_changed = true; }
     void refresh_prompt();
 
     void toggle_panel();
@@ -76,30 +76,30 @@ private:
     // ----- terminal geometry -----
     // Terminal dimensions. Placeholder values used during static construction;
     // `st` calls resize() from tresize() before the first frame is rendered.
-    inline static int term_cols_ = 80;
-    inline static int term_rows_ = 24;
+    inline static int m_term_cols = 80;
+    inline static int m_term_rows = 24;
 
     // ----- shell state -----
     // Set once from init() after the shell is forked; never change thereafter.
-    inline static int pty_fd_ = -1;
-    inline static pid_t shell_pid_ = 0;
-    inline static int cursor_y_ = 0;
+    inline static int m_pty_fd = -1;
+    inline static pid_t m_shell_pid = 0;
+    inline static int m_cursor_y = 0;
     inline static Ipc m_ipc;
 
     // ----- panel geometry -----
-    Canvas canvas_;  // recompute_geometry() only resets its size.
+    Canvas m_canvas;  // recompute_geometry() only resets its size.
 
     // ----- panel state -----
-    bool shell_owns_tty_ = false;
-    bool hidden_ = false;  // true: force-hidden regardless of shell ownership
-    bool zsh_ready_ = false;
-    bool cwd_changed_ = false;
-    bool dirty_ = false;   // true: render() rebuilds canvas_'s buffer before next draw.
+    bool m_shell_owns_tty = false;
+    bool m_hidden = false;  // true: force-hidden regardless of shell ownership
+    bool m_zsh_ready = false;
+    bool m_cwd_changed = false;
+    bool m_dirty = false;   // true: render() rebuilds m_canvas's buffer before next draw.
 
-    std::string cwd_;             // the current working directory
-    std::vector<Entry> entries_;  // cache of the entries in cwd_, always ends with '/'
-    int selected_idx_ = 0;        // index into entries_ of the highlighted row
-    int first_visible_idx_ = 0;   // index into entries_ of the first visible row
+    std::string m_cwd;             // the current working directory
+    std::vector<Entry> m_entries;  // cache of the entries in m_cwd, always ends with '/'
+    int m_selected_idx = 0;        // index into m_entries of the highlighted row
+    int m_first_visible_idx = 0;   // index into m_entries of the first visible row
 
     bool visible() const;
 
@@ -129,9 +129,9 @@ private:
 
     void recompute_geometry();
 
-    // Rebuilds entries_[] from cwd_. prev_dir_stat is the previous directory's stat,
+    // Rebuilds m_entries[] from m_cwd. prev_dir_stat is the previous directory's stat,
     // used to re-locate that directory among the new entries (e.g. ".." after
-    // descending, or the subdir just left after ascending) and re-seat selected_idx_ on
+    // descending, or the subdir just left after ascending) and re-seat m_selected_idx on
     // it.
     void load_entries(const struct stat& prev_dir_stat);
 

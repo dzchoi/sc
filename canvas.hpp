@@ -27,19 +27,19 @@ public:
     Draw& operator=(Draw&&) =default;
 
     // Moves cursor.
-    Draw& move(int x) { x_ = x; return *this; }
-    Draw& move(int x, int y) { x_ = x; y_ = y; return *this; }
+    Draw& move(int x) { m_x = x; return *this; }
+    Draw& move(int x, int y) { m_x = x; m_y = y; return *this; }
 
-    Draw& color(uint32_t fg) { fg_ = fg; return *this; }
-    Draw& color(uint32_t fg, uint32_t bg) { fg_ = fg; bg_ = bg; return *this; }
+    Draw& color(uint32_t fg) { m_fg = fg; return *this; }
+    Draw& color(uint32_t fg, uint32_t bg) { m_fg = fg; m_bg = bg; return *this; }
 
-    // Sets up a field of `span` cells starting at the current cursor (x_); the text
+    // Sets up a field of `span` cells starting at the current cursor (m_x); the text
     // given to the next put() is positioned left/right/centered within the field if it
     // fits. If it doesn't fit and ellipsize() wasn't also called, it's hard-cut - from
     // the right, left, or both ends, respectively - to fit.
-    Draw& left(int span) { align_ = Align::Left; span_ = span; return *this; }
-    Draw& right(int span) { align_ = Align::Right; span_ = span; return *this; }
-    Draw& mid(int span) { align_ = Align::Mid; span_ = span; return *this; }
+    Draw& left(int span) { m_align = Align::Left; m_span = span; return *this; }
+    Draw& right(int span) { m_align = Align::Right; m_span = span; return *this; }
+    Draw& mid(int span) { m_align = Align::Mid; m_span = span; return *this; }
 
     // Which part(s) of the text survive when it overflows the field, marking the cut
     // with a mid-string ellipsis ('…' U+2026) instead of a hard cut: Keep::Left/Right/
@@ -51,13 +51,13 @@ public:
     // its own; left()/mid()/right() then only affect where the text sits when it *fits*
     // the field.
     enum class Keep { Default, Left, Mid, Right, Both };
-    Draw& ellipsize(Keep keep) { keep_ = keep; return *this; }
+    Draw& ellipsize(Keep keep) { m_keep = keep; return *this; }
 
-    // Puts a single glyph at (x_, y_).
+    // Puts a single glyph at (m_x, m_y).
     Draw& put(Rune u, ushort mode = ATTR_NULL);
 
-    // Puts a UTF-8 text at (x_, y_) in a field (`span_` cells wide); then advances
-    // cursor and clears `span_`.
+    // Puts a UTF-8 text at (m_x, m_y) in a field (`m_span` cells wide); then advances
+    // cursor and clears `m_span`.
     Draw& put(std::string_view s, ushort mode = ATTR_NULL);
 
     // Fills the whole field with a repeated glyph.
@@ -66,10 +66,10 @@ public:
     // Changes the color temporarily. E.g. draw.with_fg(3, [](Draw& d){ d.put("..."); })
     template <typename F>
     Draw& with_fg(uint32_t fg, F&& body) {
-        uint32_t saved = fg_;
-        fg_ = fg;
+        uint32_t saved = m_fg;
+        m_fg = fg;
         std::forward<F>(body)(*this);
-        fg_ = saved;
+        m_fg = saved;
         return *this;
     }
 
@@ -77,17 +77,17 @@ private:
     enum class Align { Left, Right, Mid };
 
     // Handles a Left field's Keep::Left/Both ellipsis case for text overflowing the
-    // `xend`-cell boundary, writing glyphs and advancing x_ as it goes. Returns false
+    // `xend`-cell boundary, writing glyphs and advancing m_x as it goes. Returns false
     // without writing anything if the text already fits the field - the caller should
     // fall back to normal left-aligned streaming in that case.
     bool put_left_ellipsized(std::string_view s, int xend, ushort mode);
 
-    Canvas& canvas_;
-    int x_ = 0, y_ = 0;  // cursor within the panel
-    uint32_t fg_ = 0, bg_ = 0;
-    Align align_ = Align::Left;
-    Keep keep_ = Keep::Default;
-    int span_;  // field width
+    Canvas& m_canvas;
+    int m_x = 0, m_y = 0;  // cursor within the panel
+    uint32_t m_fg = 0, m_bg = 0;
+    Align m_align = Align::Left;
+    Keep m_keep = Keep::Default;
+    int m_span;  // field width
 };
 
 // Canvas: A rectangular drawing surface positioned within the terminal grid.
@@ -111,30 +111,30 @@ public:
     // (Re)positions or resizes the surface.
     void reset(int top, int left, int width, int height, int term_cols);
 
-    int top()    const { return top_; }
-    int left()   const { return left_; }
-    int width()  const { return width_; }
-    int height() const { return height_; }
+    int top()    const { return m_top; }
+    int left()   const { return m_left; }
+    int width()  const { return m_width; }
+    int height() const { return m_height; }
 
     Draw draw() { return Draw(*this); }
 
-    // Presents every row via xdrawline(). No-op if width_/height_ are 0.
+    // Presents every row via xdrawline(). No-op if m_width/m_height are 0.
     void present();
 
 private:
-    inline static std::vector<Glyph> linebuf_;  // height_ * term_cols_ glyphs
+    inline static std::vector<Glyph> m_linebuf;  // m_height * m_term_cols glyphs
 
     friend class Draw;
 
-    inline static int term_cols_ = 0;
-    int top_ = 0;
-    int left_ = 0;
-    int width_ = 0;
-    int height_ = 0;
+    inline static int m_term_cols = 0;
+    int m_top = 0;
+    int m_left = 0;
+    int m_width = 0;
+    int m_height = 0;
 
     // Raw pointer to row y, for handing to xdrawline(row_ptr(y), left(), y, right()).
-    static Glyph* row_ptr(int y) { return linebuf_.data() + y * term_cols_; }
+    static Glyph* row_ptr(int y) { return m_linebuf.data() + y * m_term_cols; }
 
-    // Reference to the glyph at surface-local (x, y), i.e. row_ptr(y)[left_ + x].
-    Glyph& cell(int y, int x) { return row_ptr(y)[left_ + x]; }
+    // Reference to the glyph at surface-local (x, y), i.e. row_ptr(y)[m_left + x].
+    Glyph& cell(int y, int x) { return row_ptr(y)[m_left + x]; }
 };

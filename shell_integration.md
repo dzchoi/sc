@@ -8,9 +8,10 @@ command line.
 ## Channels
 
 ```
-zsh / sc.zsh  -- OSC output -->  st.c / panel.cpp
-zsh / sc.zsh  <- socket RPC -->  panel.cpp
-SC panel keys -- private input -> zsh ZLE widgets
+zsh / sc.zsh  --- OSC notifications via PTY -->  SC
+zsh / sc.zsh  --- socket request ------------->  SC IPC server
+zsh / sc.zsh  <-- socket reply ----------------  SC IPC server
+zsh ZLE       <-- private sequences via PTY ---  SC
 ```
 
 | Component | Responsibility |
