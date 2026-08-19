@@ -80,14 +80,13 @@ monotonic clock and refreshes the prompt after geometry settles.
   terminal interface rather than mirrored in panel state.
 - Treat the current directory as data, not a lifecycle flag. Adapter readiness and a
   pending cwd refresh have separate meanings and remain explicit state.
+- Keep alternate-screen startup behavior in terminfo rather than coupling it to the
+  panel or changing the upstream terminal parser. `smcup` enters mode 1049 and homes
+  the alternate-screen cursor; `rmcup` lets the terminal restore the shell cursor.
+  `make install` compiles `st.info` with `tic`, while `make` alone leaves the user's
+  installed terminfo database unchanged.
 
 ## To-do
-* The legacy tty* function names in st.c are upstream API names and can remain. But new comments, fields, and docs should say “PTY” for transport/process-group details and “terminal” only for emulator/UI concepts. For example,
-  ```
-  // Show the overlay only while the shell owns the PTY's foreground process group.
-  shell_owns_tty_ = (::tcgetpgrp(pty_fd_) == shell_pid_);
-  ```
-
 * View and Edit
   ```
   _sc_run_selected() {
@@ -124,29 +123,28 @@ monotonic clock and refreshes the prompt after geometry settles.
   ```
 
 ### Appearance
-  - `less` with a file that is less than the screen height does not show the file content aligned at the top. It look to align at the bottom.
-  - Application icon
+  - It has a ungly default application icon now.
   - `static unsigned int rows = 54` in config.h seems adjusting according to the terminal screen height. However, snap to the screen boundary without extra pixels.
   - Use '~' instead of '/home/stem' in the title.
-  - Handle Symlinks and consider permissions
-  - `history` selection menu.
-  - Hangul typing shows a combination box.
+  - Handle Symlinks and consider permissions.
+  - `history` selection menu (F1?).
+  - Hangul typing shows the unnecessary combination box.
   - `Panel::dirty_` for each panel row instead of the entire panel
 
 ### Mouse
   - Mouse selects text within the panel.
   - Scroll back with mouse wheel.
 
-### Keys
+### Key customization
   - F3: (colored) `less $0`
   - F4: `vim $0` (not gvim)
   - F5: fast copy using rsync?
-  - diff directories, ...
+  - ??: diff directories, ...
   - Show memory usage, ...
 
-### Brief list panel
+### Brief/detailed panel view
 
-### Double panel
+### Support Double panel
 
 ### Support VFS using fuse-zip
   - Not only viewing a file in zip, we can execute a file directly from the zip.
