@@ -4,7 +4,7 @@
 
 SC should load its required zsh adapter automatically without modifying the user's
 startup files or injecting shell commands through the PTY. The user's normal zsh
-configuration must retain its ordering and `ZDOTDIR` behavior, and `Panel::init()` must
+configuration must retain its ordering and `ZDOTDIR` behavior, and `Shell::init()` must
 not return until the adapter is ready.
 
 ## Startup invariant
@@ -22,7 +22,7 @@ must not construct or inject arbitrary shell-language commands through the PTY.
 
 ## Private `ZDOTDIR` proxy
 
-`panel_preinit()` runs immediately before the shell is forked. Extend that preparation
+`shell_preinit()` runs immediately before the shell is forked. Extend that preparation
 to create a private, owner-only startup directory and point `ZDOTDIR` at it for the
 initial zsh process. This keeps the existing `st.c` and `x.c` integration unchanged.
 
@@ -80,11 +80,11 @@ is set, sourcing `sc.zsh` installs the adapter without emitting OSC `6770`.
 
 The startup proxy owns the readiness notification and emits it exactly once, after the
 last applicable user startup file. This prevents an old manual `source sc.zsh` line from
-allowing `Panel::init()` to finish before the remainder of `.zshrc` or `.zlogin`.
+allowing `Shell::init()` to finish before the remainder of `.zshrc` or `.zlogin`.
 
-`Panel::init()` retains its existing bounded wait and, after OSC `6770`, initializes
-`shell_owns_tty_`, `cwd_`, and the directory entries. No startup-specific condition is
-needed in `visible()`, `poll()`, or `handle_key()`.
+`Shell::init()` retains the bounded wait. After OSC `6770`, `shell_init()` invokes
+`Panel::init()` to initialize `cwd_` and the directory entries.
+No startup-specific condition is needed in `visible()`, `poll()`, or `handle_key()`.
 
 ## Environment boundary
 
@@ -107,14 +107,14 @@ global shell parameter because its value is expanded before the helper is execut
 ## Resource ownership and cleanup
 
 Use a cohesive bootstrap owner for the private startup directory and its generated
-files rather than making `Ipc` own unrelated zsh configuration. Record every fixed
+files rather than making `Shell` own unrelated zsh configuration. Record every fixed
 pathname during initialization so cleanup requires only async-signal-safe operations:
 
 - close owned descriptors;
 - unlink the generated proxy files;
 - remove the private directory.
 
-As with `Ipc`, guard cleanup with the creator PID. Normal destruction and the
+As with `Shell`, guard cleanup with the creator PID. Normal destruction and the
 `SIGCHLD` path must invoke the same idempotent cleanup, while the forked shell must not
 remove resources owned by its parent.
 
@@ -131,7 +131,7 @@ zle reset-prompt
 ```
 
 The command never enters `BUFFER` or shell history. While `less` owns the foreground
-PTY, the existing `shell_owns_tty_` rule hides the panel; the panel returns when zsh
+PTY, `Panel::visible()` hides the panel; the panel returns when zsh
 regains the PTY.
 
 ## Expected limitations

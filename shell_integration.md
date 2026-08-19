@@ -18,7 +18,7 @@ zsh ZLE       <-- private sequences via PTY ---  SC
 | --- | --- |
 | `sc.zsh` | Owns ZLE's command buffer, `cd`, prompt construction, and Enter behavior. |
 | `panel.cpp` | Owns selection, panel geometry, and visibility; supplies panel state to IPC replies. |
-| `ipc.cpp` | Owns the control socket's lifetime, transport, and request protocol. |
+| `shell.cpp` | Owns communication with the managed shell: socket protocol, PTY events, and shell state reads. |
 | `st.c` | Creates `SC_SOCKET` before starting zsh and parses private OSC notifications. |
 | `x.c` | Watches the control socket in the main event loop. |
 | `scctl` | Queries the private socket for zsh. |
@@ -39,16 +39,16 @@ parent shell before launching SC: the condition is false there.
 
 Startup proceeds as follows:
 
-1. `st.c:ttynew()` calls `panel_preinit()` before it forks.
-2. `Panel::preinit()` creates an owner-only Unix socket in a private `sc-*` directory
+1. `st.c:ttynew()` calls `shell_preinit()` before it forks.
+2. `Shell::preinit()` creates an owner-only Unix socket in a private `sc-*` directory
    under `$XDG_RUNTIME_DIR`, or under `/tmp` when the runtime directory is unavailable.
-3. `panel_preinit()` exports its path as `SC_SOCKET`; the child zsh inherits it.
+3. `shell_preinit()` exports its path as `SC_SOCKET`; the child zsh inherits it.
 4. The child zsh reads `.zshrc`, sources `sc.zsh`, installs ZLE widgets and
    bindings, then emits OSC `6770`.
-5. `Panel::init()` reads startup output through the normal terminal parser while waiting
+5. `Shell::init()` reads startup output through the normal terminal parser while waiting
    up to one second for the adapter.
-6. `st.c:strhandle()` handles OSC `6770` with `panel_notify_zsh_ready()`, completing
-   initialization before the normal event loop begins.
+6. `st.c:strhandle()` handles OSC `6770` with `shell_notify_zsh_ready()`, completing
+   shell initialization; `shell_init()` then calls `Panel::init()` to load the initial directory.
 
 The readiness handshake establishes that the adapter is available before panel polling,
 IPC service, or input handling begins. SC exits with a configuration error if the
@@ -87,18 +87,18 @@ for Enter behavior.
 `sc.zsh` calls `scctl selected` or `scctl padding <applied_padding>`. `scctl` connects to the
 socket named by `SC_SOCKET`, sends the request, and prints the response.
 
-`x.c` adds `panel_ipc_fd()` to its `pselect()` fd set. On readiness it calls
-`panel_service_ipc()`, which dispatches to:
+`x.c` adds `shell_ipc_fd()` to its `pselect()` fd set. On readiness it calls
+`shell_service_ipc()`, which dispatches to:
 
-- `Ipc::service()` replies to `selected` with the type (`D` or `F`) plus entry name;
+- `Shell::service_ipc()` replies to `selected` with the type (`D` or `F`) plus entry name;
 - `Panel::prompt_padding(applied_padding)` for `padding <applied_padding>`: total
   number of prompt-owned newlines needed after replacing the adapter's existing prefix.
 
 The process that creates the socket remains its sole cleanup owner across `fork()`.
-Normal `exit()` paths release it through `Ipc`'s destructor. The `SIGCHLD` path calls
+Normal `exit()` paths release it through `Shell`'s destructor. The `SIGCHLD` path calls
 the same idempotent cleanup explicitly before `_exit()`; that cleanup uses only
 async-signal-safe system calls. The forked shell cannot close or unlink the parent's
-socket through its inherited `Ipc` state.
+socket through its inherited `Shell` state.
 
 `$XDG_RUNTIME_DIR` is preferred because it is private to the logged-in user and intended
 for runtime sockets. SC falls back to its owner-only directory under `/tmp` when that
@@ -107,7 +107,7 @@ variable is absent, relative, unusable, or too long for a Unix-domain socket add
 ## Cwd update path
 
 `sc.zsh` installs a `chpwd` hook. Every successful zsh directory change emits
-OSC `6771`; `st.c:strhandle()` turns that into `panel_notify_cwd_changed()`.
+OSC `6771`; `st.c:strhandle()` turns that into `shell_notify_cwd_changed()`.
 The panel then marks `cwd_changed_` and reconciles its cached directory against
 `/proc/<shell-pid>/cwd` on the next poll.
 

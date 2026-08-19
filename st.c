@@ -722,7 +722,7 @@ sigchld(int a)
 	} while (p < 0 && errno == EINTR);
 
 	if (p < 0) {
-		panel_cleanup_ipc();
+		shell_cleanup_ipc();
 		_exit(1);
 	}
 
@@ -731,7 +731,7 @@ sigchld(int a)
 		return;
 	}
 
-	panel_cleanup_ipc();
+	shell_cleanup_ipc();
 	if ((WIFEXITED(stat) && WEXITSTATUS(stat)) || WIFSIGNALED(stat))
 		_exit(1);
 	_exit(0);
@@ -789,7 +789,7 @@ ttynew(const char *line, char *cmd, const char *out, char **args)
 	if (openpty(&m, &s, NULL, NULL, NULL) < 0)
 		die("openpty failed: %s\n", strerror(errno));
 
-	panel_preinit();
+	shell_preinit();
 
 	switch (pid = fork()) {
 	case -1:
@@ -820,7 +820,7 @@ ttynew(const char *line, char *cmd, const char *out, char **args)
 		close(s);
 		cmdfd = m;
 		signal(SIGCHLD, sigchld);
-		panel_init(cmdfd, pid);
+		shell_init(cmdfd, pid);
 		break;
 	}
 	return cmdfd;
@@ -1947,10 +1947,10 @@ strhandle(void)
 			}
 			return;
 		case 6770: /* SC zsh adapter ready */
-			panel_notify_zsh_ready();
+			shell_notify_zsh_ready();
 			return;
 		case 6771: /* SC zsh adapter reports a shell cwd change */
-			panel_notify_cwd_changed();
+			shell_notify_cwd_changed();
 			return;
 		case 10: /* set dynamic VT100 text foreground color */
 		case 11: /* set dynamic VT100 text background color */

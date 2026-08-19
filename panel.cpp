@@ -12,62 +12,38 @@
 #include <cerrno>               // for errno, EINTR
 #include <chrono>               // for std::chrono::steady_clock
 #include <cstdint>              // for uint32_t
-#include <cstring>              // for std::strcmp(), std::memcpy(), ...
-#include <cstdlib>              // for setenv()
+#include <cstring>              // for std::strcmp(), std::strerror()
 #include <ctime>                // for localtime_r(), std::strftime()
-#include <cstdio>               // for std::snprintf()
 #include <string>               // for std::string, std::to_string(), ...
 #include <utility>              // for std::move(), std::pair()
-#include <vector>               // for std::vector<>
 
 #include <dirent.h>             // for DIR, opendir(), ...
 #include <limits.h>             // for PATH_MAX
-#include <poll.h>               // for poll(), pollfd, POLLIN, ...
 #include <sys/stat.h>           // for struct stat, lstat(), ...
-#include <sys/types.h>          // for pid_t, ssize_t
-#include <termios.h>            // for tcgetpgrp()
-#include <unistd.h>             // for close(), getcwd(), ...
+#include <sys/types.h>          // for off_t, pid_t, time_t
+#include <unistd.h>             // for getcwd()
 #include <X11/X.h>              // for ControlMask, ShiftMask
 #include <X11/keysym.h>         // for XK_*
 
 #include "panel.hpp"            // for Panel
 #include "sc_config.hpp"        // for SC configuration constants
+#include "shell.hpp"            // for Shell, ZleEvent
 
 extern "C" {
 #include "panel.h"              // for the C ABI shim
-// ttywrite() is declared in st.h, pulled in transitively by panel.hpp.
 }
 
 
 
 namespace {
 
+Shell g_shell;
+Panel g_panel;
+
 template <typename T>
 constexpr T clamp_between(T v, T lo, T hi)
 {
     return v < lo ? lo : (v > hi ? hi : v);
-}
-
-enum class ZleEvent {
-    CdParent,
-    CdChild,
-    InsertName,
-    InsertPath,
-    RefreshPrompt,
-};
-
-// Deliver an SC control event to the shell's ZLE input stream.
-void send_zle_event(ZleEvent event)
-{
-    constexpr const char* sequences[] = {
-        "\033[6770~",  // CdParent
-        "\033[6771~",  // CdChild
-        "\033[6772~",  // InsertName
-        "\033[6773~",  // InsertPath
-        "\033[6774~",  // RefreshPrompt
-    };
-    const char* sequence = sequences[static_cast<unsigned>(event)];
-    ttywrite(sequence, std::strlen(sequence), 1);
 }
 
 // Appends a trailing '/' unless already present (e.g. root "/").
@@ -136,7 +112,7 @@ std::pair<std::string, std::string> format_mtime(time_t mtime)
 
 bool Panel::visible() const
 {
-    return m_shell_owns_tty && !m_hidden && m_canvas.width() > 0 && m_canvas.height() > 0;
+    return g_shell.owns_pty() && !m_hidden && m_canvas.width() > 0 && m_canvas.height() > 0;
 }
 
 void Panel::recompute_geometry()
@@ -226,17 +202,6 @@ void Panel::load_entries(const struct stat& prev_dir_stat)
     }
     m_first_visible_idx = 0;
     m_dirty = true;
-}
-
-std::string Panel::shell_cwd()
-{
-    char buf[PATH_MAX];
-    char proc[32];
-    std::snprintf(proc, sizeof(proc), "/proc/%d/cwd", static_cast<int>(m_shell_pid));
-    ssize_t n = ::readlink(proc, buf, sizeof(buf) - 1);
-    if ( n <= 0 )
-        die("read shell cwd failed: %s\n", n < 0 ? std::strerror(errno) : "empty path");
-    return with_trailing_slash(std::string(buf, n));
 }
 
 void Panel::render()
@@ -384,18 +349,12 @@ Panel::Panel()
     // Constructed during static initialization, before the shell is forked from `st`.
     // The child shell inherits our current working directory (cwd) during the fork.
     char buf[PATH_MAX];
-    // Cannot use shell_now() instead of getcwd() now until init() is called.
+    // Shell::get_cwd() requires the shell PID, which Shell::init() will set after the
+    // fork.
     if ( !::getcwd(buf, sizeof(buf)) )
         die("get current cwd failed: %s\n", std::strerror(errno));
     m_cwd = with_trailing_slash(buf);
     recompute_geometry();
-}
-
-void Panel::preinit()
-{
-    const char* socket_path = m_ipc.init();
-    if ( ::setenv("SC_SOCKET", socket_path, 1) < 0 )
-        die("set SC_SOCKET failed: %s\n", std::strerror(errno));
 }
 
 // Returns the total zsh-owned padding needed to place the prompt below the panel.
@@ -416,50 +375,15 @@ const Panel::Entry* Panel::selected_entry() const
     return &m_entries[m_selected_idx];
 }
 
-void Panel::init(int pty_fd, pid_t shell_pid)
+void Panel::init()
 {
-    m_pty_fd = pty_fd;
-    m_shell_pid = shell_pid;
-
-    const auto deadline = std::chrono::steady_clock::now()
-        + std::chrono::milliseconds(kZshReadyTimeoutMs);
-    struct pollfd pfd{m_pty_fd, POLLIN, 0};
-    while ( !m_zsh_ready ) {
-        const auto now = std::chrono::steady_clock::now();
-        if ( now >= deadline )
-            die("SC zsh adapter did not report readiness within %d ms; "
-                "source sc.zsh from ~/.zshrc\n", kZshReadyTimeoutMs);
-
-        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-            deadline - now).count();
-        const int timeout_ms = static_cast<int>(std::max<int64_t>(1, remaining));
-        pfd.revents = 0;
-        const int result = ::poll(&pfd, 1, timeout_ms);
-        if ( result < 0 ) {
-            if ( errno == EINTR ) continue;
-            die("waiting for SC zsh adapter failed: %s\n", std::strerror(errno));
-        }
-        if ( result == 0 ) continue;
-        if ( pfd.revents & POLLNVAL )
-            die("waiting for SC zsh adapter failed: invalid PTY descriptor\n");
-
-        // Preserve all startup output and let st's existing parser recognize OSC 6770.
-        if ( pfd.revents & (POLLIN | POLLERR | POLLHUP) )
-            ttyread();
-    }
-
-    // Read the authoritative startup state once. Normal polling begins only after the
-    // required adapter has installed all private ZLE bindings.
-    m_shell_owns_tty = (::tcgetpgrp(m_pty_fd) == m_shell_pid);
-    m_cwd = shell_cwd();
+    m_cwd = with_trailing_slash(g_shell.get_cwd());
     load_entries({});
 }
 
 void Panel::poll(int* term_dirty)
 {
-    assert( m_pty_fd >= 0 && m_shell_pid > 0 );  // also asserts that .init() was called.
-    const bool was_visible = visible();
-    m_shell_owns_tty = (::tcgetpgrp(m_pty_fd) == m_shell_pid);
+    const bool was_visible = m_was_visible;
     const bool now_visible = visible();
 
     if ( now_visible ) {
@@ -468,7 +392,8 @@ void Panel::poll(int* term_dirty)
         if ( !was_visible || m_cwd_changed ) {
             struct stat prev_dir_stat{};  // zero-initialized in case lstat() below fails.
             m_cwd_changed = false;
-            if ( std::string cwd = shell_cwd(); cwd != m_cwd ) {
+            if ( std::string cwd = with_trailing_slash(g_shell.get_cwd())
+              ; cwd != m_cwd ) {
                 ::lstat(m_cwd.c_str(), &prev_dir_stat);
                 m_cwd = cwd;
                 m_selected_idx = 0;  // Reset selection on a long jump (e.g. "cd /").
@@ -494,6 +419,8 @@ void Panel::poll(int* term_dirty)
         term_dirty + m_canvas.top(),
         term_dirty + m_canvas.top() + m_canvas.height(),
         [](int dirty) { return dirty != 0; }));
+
+    m_was_visible = now_visible;
 }
 
 void Panel::draw()
@@ -533,7 +460,7 @@ void Panel::adjust_timeout(double& timeout_ms)
 void Panel::refresh_prompt()
 {
     if ( visible() )
-        send_zle_event(ZleEvent::RefreshPrompt);
+        g_shell.send_event(ZleEvent::RefreshPrompt);
 }
 
 void Panel::toggle_panel()
@@ -574,7 +501,7 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char*, int)
                 m_selected_idx -= list_rows;
                 goto clamp_cursor;
             }
-            send_zle_event(ZleEvent::CdParent);
+            g_shell.send_event(ZleEvent::CdParent);
             return true;
         case XK_Page_Down:
             if ( (state & ControlMask) == 0 ) {
@@ -582,7 +509,7 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char*, int)
                 goto clamp_cursor;
             }
             if ( m_entries[m_selected_idx].is_dir )
-                send_zle_event(ZleEvent::CdChild);
+                g_shell.send_event(ZleEvent::CdChild);
             return true;
 
         clamp_cursor:
@@ -596,7 +523,7 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char*, int)
         case XK_Return:
         case XK_KP_Enter:
             if ( state & ControlMask ) {
-                send_zle_event((state & ShiftMask)
+                g_shell.send_event((state & ShiftMask)
                     ? ZleEvent::InsertPath : ZleEvent::InsertName);
                 return true;
             }
@@ -612,27 +539,26 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char*, int)
 
 
 
-// =========================================================================
 // The single instance and the C ABI shim.
-// =========================================================================
-
-namespace { Panel g_panel; }
 
 extern "C" {
 
-void panel_preinit(void) { Panel::preinit(); }
-int panel_ipc_fd(void) { return Panel::ipc_fd(); }
-void panel_service_ipc(void) { g_panel.service_ipc(); }
-void panel_cleanup_ipc(void) { Panel::cleanup_ipc(); }
+void shell_preinit(void) { g_shell.preinit(); }
+void shell_init(int pty_fd, pid_t shell_pid) {
+    g_shell.init(pty_fd, shell_pid);
+    g_panel.init();
+}
+void shell_cleanup_ipc(void) { g_shell.cleanup(); }
+int  shell_ipc_fd(void) { return g_shell.ipc_fd(); }
+void shell_service_ipc(void) { g_shell.service_ipc(g_panel); }
+void shell_notify_zsh_ready(void) { g_shell.notify_zsh_ready(); }
+void shell_notify_cwd_changed(void) { g_panel.notify_cwd_changed(); }
 
-void panel_init(int pty_fd, pid_t shell_pid) { g_panel.init(pty_fd, shell_pid); }
 void panel_poll(int* term_dirty) { g_panel.poll(term_dirty); }
 void panel_draw(void) { g_panel.draw(); }
 
 void panel_resize(int cols, int rows) { g_panel.resize(cols, rows); }
 void panel_adjust_timeout(double* timeout_ms) { g_panel.adjust_timeout(*timeout_ms); }
-void panel_notify_zsh_ready(void) { g_panel.notify_zsh_ready(); }
-void panel_notify_cwd_changed(void) { g_panel.notify_cwd_changed(); }
 void panel_refresh_prompt(void) { g_panel.refresh_prompt(); }
 
 void panel_toggle_panel(const Arg*) { g_panel.toggle_panel(); }

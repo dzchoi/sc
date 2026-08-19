@@ -21,21 +21,21 @@ extern "C" {
 
 /* Create SC's private control socket and export its path as SC_SOCKET before forking
  * the shell. Setup failures terminate SC. */
-void panel_preinit(void);
+void shell_preinit(void);
 
 /* Control socket used by SC's required zsh adapter. */
-int panel_ipc_fd(void);
-void panel_service_ipc(void);
+int shell_ipc_fd(void);
+void shell_service_ipc(void);
 
 /* Release the parent-owned control socket. Safe to call from a signal handler and
  * harmless in the forked shell process. */
-void panel_cleanup_ipc(void);
+void shell_cleanup_ipc(void);
 
 /* Called once from ttynew() after the shell is forked. Waits up to
  * kZshReadyTimeoutMs for the required adapter before returning. Must be called before
  * panel_poll() and panel_draw(). pty_fd is the master PTY fd; shell_pid is the forked
  * shell's PID. */
-void panel_init(int pty_fd, pid_t shell_pid);
+void shell_init(int pty_fd, pid_t shell_pid);
 
 /* Synchronize panel state and mark its covered terminal rows dirty when visibility
  * changes. term_dirty is term.dirty and must be passed before drawregion() clears it. */
@@ -51,8 +51,8 @@ void panel_resize(int cols, int rows);
  * timeout represents an unbounded wait. */
 void panel_adjust_timeout(double* timeout_ms);
 
-void panel_notify_zsh_ready(void);
-void panel_notify_cwd_changed(void);
+void shell_notify_zsh_ready(void);
+void shell_notify_cwd_changed(void);
 void panel_refresh_prompt(void);
 
 /* Ctrl+O handler. Toggles the panel and dirties the terminal rows it covers. */

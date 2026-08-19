@@ -20,8 +20,8 @@ The frame call chain is:
           --> panel_draw()
 ```
 
-`panel_poll()` synchronizes PTY ownership and pending shell state, marks covered
-terminal rows dirty for a visibility transition, and snapshots `m_needs_draw` before
+`panel_poll()` observes pending shell state, marks covered terminal rows dirty for a
+visibility transition, and snapshots `m_needs_draw` before
 `drawregion()` clears those flags. `panel_draw()` consumes that snapshot and presents
 only when required. It must remain after terminal drawing so terminal output cannot
 overwrite the overlay during the same frame.
@@ -34,8 +34,8 @@ pending resize deadline into `pselect()` so the loop wakes even while otherwise 
 
 ## State and control flow
 
-`Panel::preinit()` is the pre-fork boundary for the control socket: it creates the
-socket, exports its path as `SC_SOCKET`, and fails startup if either step fails. The
+`Shell::preinit()` is the pre-fork boundary for the control socket: it creates the
+socket, exports its path as `SC_SOCKET`, and fails startup when socket setup fails. The
 shell inherits that environment. Adapter readiness (`OSC 6770`) is a startup latch;
 cwd changes (`OSC 6771`) are later state-change notifications. Do not merge them:
 readiness permits initialization to finish, while a cwd notification requests a
@@ -63,10 +63,10 @@ monotonic clock and refreshes the prompt after geometry settles.
   rows on every visible frame: terminal output may repaint beneath an already-visible
   overlay.
 - A user toggle changes `m_hidden` before the subsequent draw calls `panel_poll()`.
-  `poll()` therefore cannot infer the pre-toggle visibility from `visible()` alone.
-  Carry that transition into `poll()` explicitly when using a partial redraw; otherwise
-  hiding can leave stale overlay pixels. A full-terminal redraw avoids this trap but is
-  more expensive.
+  `poll()` compares `visible()` with `m_was_visible`, then records the new value. This
+  captures the pre-toggle state for a partial redraw; otherwise hiding can
+  leave stale overlay pixels. A full-terminal redraw avoids this trap but is more
+  expensive.
 - The panel's covered row range is the smallest correct invalidation for normal
   visibility changes. Full-terminal invalidation is reserved for terminal-wide changes.
 
@@ -75,9 +75,10 @@ monotonic clock and refreshes the prompt after geometry settles.
 - Panel owns overlay eligibility, row invalidation for its visibility changes, and the
   delayed prompt-refresh deadline. `st.c` owns terminal storage and rendering order;
   it supplies `term.dirty` at the frame boundary rather than exposing terminal globals.
-- Keep C ABI functions thin. C++ state transitions happen on `g_panel`; terminal
-  callbacks needed by the panel (`draw`, `redraw`, `tgetcursor`) are declared by the
-  terminal interface rather than mirrored in panel state.
+- Keep C ABI functions thin. C++ state transitions happen on `g_shell` or `g_panel`
+  according to their boundary; terminal callbacks needed by the panel (`draw`,
+  `redraw`, `tgetcursor`) are declared by the terminal interface rather than mirrored
+  in panel state.
 - Treat the current directory as data, not a lifecycle flag. Adapter readiness and a
   pending cwd refresh have separate meanings and remain explicit state.
 - Keep alternate-screen startup behavior in terminfo rather than coupling it to the

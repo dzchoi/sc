@@ -20,11 +20,10 @@
 #include <chrono>               // for std::chrono::steady_clock
 #include <optional>             // for std::optional<>
 #include <string>               // for std::string
-#include <sys/types.h>          // for off_t, pid_t, time_t
+#include <sys/types.h>          // for off_t, time_t
 #include <vector>               // for std::vector<>
 
 #include "canvas.hpp"           // for Canvas, Draw
-#include "ipc.hpp"              // for Ipc
 #include "sc_config.hpp"        // for SC configuration constants
 
 struct stat;
@@ -47,18 +46,12 @@ public:
     Panel(Panel&&) =default;
     Panel& operator=(Panel&&) =default;
 
-    // Ipc owns the control socket's creation, lifetime, and request protocol.
-    // Prepare the socket and its inherited environment before the shell is forked.
-    static void preinit();
-    static int ipc_fd() { return m_ipc.fd(); }
-    static void cleanup_ipc() noexcept { m_ipc.cleanup(); }
-    void service_ipc() { m_ipc.service(*this); }
-
-    // Queries used during service_ipc() execution.
+    // Queries used by Shell while serving adapter requests.
     int prompt_padding(int applied_padding) const;
     const Entry* selected_entry() const;
 
-    void init(int pty_fd, pid_t shell_pid);
+    // Builds the initial directory snapshot after Shell has established the shell state.
+    void init();
 
     // Synchronizes shell state and snapshots whether this frame needs the overlay.
     // term_dirty is the terminal's mutable row-dirty array, before drawregion() clears it.
@@ -68,7 +61,6 @@ public:
     void resize(int cols, int rows);
     void adjust_timeout(double& timeout_ms);
 
-    void notify_zsh_ready() { m_zsh_ready = true; }
     void notify_cwd_changed() { m_cwd_changed = true; }
     void refresh_prompt();
 
@@ -82,19 +74,12 @@ private:
     inline static int m_term_cols = 80;
     inline static int m_term_rows = 24;
 
-    // ----- shell state -----
-    // Set once from init() after the shell is forked; never change thereafter.
-    inline static int m_pty_fd = -1;
-    inline static pid_t m_shell_pid = 0;
-    inline static Ipc m_ipc;
-
     // ----- panel geometry -----
     Canvas m_canvas;  // recompute_geometry() only resets its size.
 
     // ----- panel state -----
-    bool m_shell_owns_tty = false;
     bool m_hidden = false;  // true: force-hidden regardless of shell ownership
-    bool m_zsh_ready = false;
+    bool m_was_visible = false;  // visibility observed during the previous poll()
     bool m_cwd_changed = false;
     bool m_dirty = false;   // true: render() rebuilds m_canvas's buffer before next draw.
     bool m_needs_draw = false;  // set by poll() before terminal rows are redrawn
@@ -141,10 +126,6 @@ private:
     // descending, or the subdir just left after ascending) and re-seat m_selected_idx on
     // it.
     void load_entries(const struct stat& prev_dir_stat);
-
-    // Returns the shell's cwd via /proc/<shell_pid>/cwd. Failure terminates SC because
-    // a valid cwd is required to maintain the panel's directory snapshot.
-    static std::string shell_cwd();
 
     void render();
 };

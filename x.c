@@ -1953,7 +1953,7 @@ run(void)
 	} while (ev.type != MapNotify);
 
 	ttyfd = ttynew(opt_line, shell, opt_io, opt_cmd);
-	ipcfd = panel_ipc_fd();
+	ipcfd = shell_ipc_fd();
 	cresize(w, h);
 
 	for (timeout = -1, drawing = 0, lastblink = (struct timespec){0};;) {
@@ -1980,7 +1980,7 @@ run(void)
 		if (FD_ISSET(ttyfd, &rfd))
 			ttyread();
 		if (FD_ISSET(ipcfd, &rfd))
-			panel_service_ipc();
+			shell_service_ipc();
 
 		xev = 0;
 		while (XPending(xw.dpy)) {
