@@ -1,5 +1,31 @@
 # Panel internals
 
+## Repository branches
+
+`upstream` names the read-only Suckless `st` remote. `upstream/master` is the
+local record of its current tip. `main` is this repository's unmodified mirror of
+that tip, and `origin/main` is the corresponding mirror published to GitHub. `sc`
+contains the project changes and is based on `main`; `origin/sc` publishes that
+customized branch. Several of these refs may name the same commit after an update.
+They remain distinct because each records a different branch or remote boundary.
+
+When Suckless updates `upstream/master`, update the mirror and then replay the
+custom branch on it:
+
+```
+git fetch upstream
+git switch main
+git merge --ff-only upstream/master
+git push origin main
+git switch sc
+git rebase main
+git push --force-with-lease origin sc
+```
+
+The fast-forward-only merge ensures `main` remains an exact upstream mirror. The
+rebase changes `sc` commit IDs, so its GitHub branch is updated with
+`--force-with-lease`, which refuses to overwrite an unexpected remote change.
+
 ## Frame lifecycle
 
 `Panel` never mutates `term.line`. `st.c` renders terminal content first, then the
