@@ -19,9 +19,9 @@
 extern "C" {
 #endif
 
-/* Create SC's private control socket before forking the shell. The returned path is
- * inherited through SC_SOCKET. Setup failures terminate SC. */
-const char* panel_preinit(void);
+/* Create SC's private control socket and export its path as SC_SOCKET before forking
+ * the shell. Setup failures terminate SC. */
+void panel_preinit(void);
 
 /* Control socket used by SC's required zsh adapter. */
 int panel_ipc_fd(void);
@@ -37,32 +37,30 @@ void panel_cleanup_ipc(void);
  * shell's PID. */
 void panel_init(int pty_fd, pid_t shell_pid);
 
- /* Synchronize panel state derived from the shell. Returns true when panel visibility
-  * changed; the caller must then dirty terminal rows so covered content is restored or
-  * or the newly visible overlay is repainted. */
-int panel_poll(void);
+/* Synchronize panel state and mark its covered terminal rows dirty when visibility
+ * changes. term_dirty is term.dirty and must be passed before drawregion() clears it. */
+void panel_poll(int* term_dirty);
 
-/* Returns 1 if the panel overlay must be redrawn this frame: either its own content
- * changed, or the terminal has dirtied rows the panel covers. term_dirty is term.dirty;
- * must be read BEFORE drawregion() clears the flags. */
-int panel_needs_draw(const int* term_dirty);
-
-/* Paint the panel overlay via xdrawline(). No-op if not visible. */
+/* Paint the panel overlay via xdrawline() if the current panel_poll() selected it. */
 void panel_draw(void);
 
-/* Keep the panel informed of the terminal cursor without ever moving it. */
+/* Keep the panel informed of terminal geometry without changing its cursor. */
 void panel_resize(int cols, int rows);
-void panel_set_cursor(int x, int y);
+
+/* Reduce timeout_ms when needed to refresh the prompt after a resize. A negative
+ * timeout represents an unbounded wait. */
+void panel_adjust_timeout(double* timeout_ms);
+
 void panel_notify_zsh_ready(void);
 void panel_notify_cwd_changed(void);
 void panel_refresh_prompt(void);
 
-/* Ctrl+O handler. Toggles panel on/off. */
-void panel_toggle_panel(void);
+/* Ctrl+O handler. Toggles the panel and dirties the terminal rows it covers. */
+void panel_toggle_panel(const Arg*);
 
 /* Called from kpress() BEFORE the character is forwarded to the PTY. ksym is an X11
- * KeySym (unsigned long). state is the X event state. Returns 1 if the panel consumed
- * the key, 0 otherwise (the key should go to the shell). */
+ * KeySym (unsigned long). state is the X event state. Draws when it changes panel
+ * selection. Returns 1 if the panel consumed the key, 0 otherwise. */
 int panel_handle_key(unsigned long ksym, unsigned state, const char* buf, int len);
 
 #ifdef __cplusplus

@@ -16,8 +16,8 @@ public:
     Ipc& operator=(const Ipc&) = delete;
     ~Ipc() { cleanup(); }
 
-    // Creates the owner-only control socket. This is called before the shell forks,
-    // so the returned path can be passed to the child through SC_SOCKET.
+    // Creates the owner-only control socket before the shell forks. Panel exports the
+    // returned path through SC_SOCKET so the child can reach this socket.
     const char* init();
     int fd() const { return m_fd; }
 

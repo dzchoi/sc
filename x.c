@@ -60,7 +60,6 @@ static void zoom(const Arg *);
 static void zoomabs(const Arg *);
 static void zoomreset(const Arg *);
 static void ttysend(const Arg *);
-static void togglepanel(const Arg *);
 
 /* config.h for applying patches and the configuration. */
 #include "config.h"
@@ -223,11 +222,6 @@ static XWindow xw;
 static XSelection xsel;
 static TermWindow win;
 
-/* Wait for the window geometry to settle before asking ZLE to redraw its prompt. */
-static const long RESIZE_SETTLE_DELAY = 150;
-/* A negative tv_nsec represents no scheduled prompt refresh. */
-static struct timespec prompt_refresh_deadline = { .tv_nsec = -1 };
-
 /* Font Ring Cache */
 enum {
 	FRC_NORMAL,
@@ -333,15 +327,6 @@ void
 ttysend(const Arg *arg)
 {
 	ttywrite(arg->s, strlen(arg->s), 1);
-}
-
-void
-togglepanel(const Arg *dummy)
-{
-	(void)dummy;
-	panel_toggle_panel();
-	redraw();	/* mark all rows dirty so the panel repaints (or its previously-covered
-				 * rows get restored on hide). */
 }
 
 int
@@ -1885,10 +1870,8 @@ kpress(XEvent *ev)
 
 	/* 1.5. panel consumes keys while visible and interested. returns 0 for keys that
 	 * should flow to the shell. */
-	if (panel_handle_key((unsigned long)ksym, e->state, buf, len)) {
-		draw();
+	if (panel_handle_key((unsigned long)ksym, e->state, buf, len))
 		return;
-	}
 
 	/* 2. custom keys from config.h */
 	if ((customkey = kmap(ksym, e->state))) {
@@ -1941,12 +1924,6 @@ resize(XEvent *e)
 		return;
 
 	cresize(e->xconfigure.width, e->xconfigure.height);
-	clock_gettime(CLOCK_MONOTONIC, &prompt_refresh_deadline);
-	prompt_refresh_deadline.tv_nsec += RESIZE_SETTLE_DELAY * 1000000L;
-	if (prompt_refresh_deadline.tv_nsec >= 1000000000L) {
-		prompt_refresh_deadline.tv_sec++;
-		prompt_refresh_deadline.tv_nsec -= 1000000000L;
-	}
 }
 
 void
@@ -1987,16 +1964,7 @@ run(void)
 
 		if (XPending(xw.dpy))
 			timeout = 0;  /* existing events might not set xfd */
-		if (prompt_refresh_deadline.tv_nsec >= 0) {
-			clock_gettime(CLOCK_MONOTONIC, &now);
-			double remaining = TIMEDIFF(prompt_refresh_deadline, now);
-			if (remaining <= 0) {
-				panel_refresh_prompt();
-				prompt_refresh_deadline.tv_nsec = -1;
-			} else if (timeout < 0 || remaining < timeout) {
-				timeout = remaining;
-			}
-		}
+		panel_adjust_timeout(&timeout);
 
 		seltv.tv_sec = timeout / 1E3;
 		seltv.tv_nsec = 1E6 * (timeout - 1E3 * seltv.tv_sec);

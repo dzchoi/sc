@@ -17,6 +17,8 @@
 #pragma once
 
 #include <cassert>              // for assert()
+#include <chrono>               // for std::chrono::steady_clock
+#include <optional>             // for std::optional<>
 #include <string>               // for std::string
 #include <sys/types.h>          // for off_t, pid_t, time_t
 #include <vector>               // for std::vector<>
@@ -46,8 +48,8 @@ public:
     Panel& operator=(Panel&&) =default;
 
     // Ipc owns the control socket's creation, lifetime, and request protocol.
-    // These methods expose it through Panel for the C ABI.
-    static const char* preinit() { return m_ipc.init(); }
+    // Prepare the socket and its inherited environment before the shell is forked.
+    static void preinit();
     static int ipc_fd() { return m_ipc.fd(); }
     static void cleanup_ipc() noexcept { m_ipc.cleanup(); }
     void service_ipc() { m_ipc.service(*this); }
@@ -58,12 +60,13 @@ public:
 
     void init(int pty_fd, pid_t shell_pid);
 
-    bool poll();
-    bool needs_draw(const int* term_dirty) const;
+    // Synchronizes shell state and snapshots whether this frame needs the overlay.
+    // term_dirty is the terminal's mutable row-dirty array, before drawregion() clears it.
+    void poll(int* term_dirty);
     void draw();
 
     void resize(int cols, int rows);
-    static void set_cursor(int y) { m_cursor_y = y; }
+    void adjust_timeout(double& timeout_ms);
 
     void notify_zsh_ready() { m_zsh_ready = true; }
     void notify_cwd_changed() { m_cwd_changed = true; }
@@ -83,7 +86,6 @@ private:
     // Set once from init() after the shell is forked; never change thereafter.
     inline static int m_pty_fd = -1;
     inline static pid_t m_shell_pid = 0;
-    inline static int m_cursor_y = 0;
     inline static Ipc m_ipc;
 
     // ----- panel geometry -----
@@ -95,6 +97,11 @@ private:
     bool m_zsh_ready = false;
     bool m_cwd_changed = false;
     bool m_dirty = false;   // true: render() rebuilds m_canvas's buffer before next draw.
+    bool m_needs_draw = false;  // set by poll() before terminal rows are redrawn
+
+    // Debounce geometry changes so ZLE redraws its prompt only after its final shape.
+    static constexpr int kResizeSettleDelayMs = 150;
+    std::optional<std::chrono::steady_clock::time_point> m_prompt_refresh_deadline;
 
     std::string m_cwd;             // the current working directory
     std::vector<Entry> m_entries;  // cache of the entries in m_cwd, always ends with '/'
@@ -135,7 +142,8 @@ private:
     // it.
     void load_entries(const struct stat& prev_dir_stat);
 
-    // Returns the shell's cwd via /proc/<shell_pid>/cwd, or an empty string on failure.
+    // Returns the shell's cwd via /proc/<shell_pid>/cwd. Failure terminates SC because
+    // a valid cwd is required to maintain the panel's directory snapshot.
     static std::string shell_cwd();
 
     void render();

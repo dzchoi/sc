@@ -765,7 +765,6 @@ int
 ttynew(const char *line, char *cmd, const char *out, char **args)
 {
 	int m, s;
-	const char *sc_socket;
 
 	if (out) {
 		term.mode |= MODE_PRINT;
@@ -790,8 +789,7 @@ ttynew(const char *line, char *cmd, const char *out, char **args)
 	if (openpty(&m, &s, NULL, NULL, NULL) < 0)
 		die("openpty failed: %s\n", strerror(errno));
 
-	sc_socket = panel_preinit();  // Expect a non-empty socket path string.
-	setenv("SC_SOCKET", sc_socket, 1);
+	panel_preinit();
 
 	switch (pid = fork()) {
 	case -1:
@@ -2593,7 +2591,6 @@ twrite(const char *buf, int buflen, int show_ctrl)
 		}
 		tputc(u);
 	}
-	panel_set_cursor(term.c.x, term.c.y);
 	return n;
 }
 
@@ -2678,7 +2675,13 @@ tresize(int col, int row)
 	}
 	term.c = c;
 	panel_resize(col, row);
-	panel_set_cursor(term.c.x, term.c.y);
+}
+
+void
+tgetcursor(int *x, int *y)
+{
+	if (x) *x = term.c.x;
+	if (y) *y = term.c.y;
 }
 
 void
@@ -2717,13 +2720,9 @@ draw(void)
 	if (term.line[term.c.y][cx].mode & ATTR_WDUMMY)
 		cx--;
 
-	/* Refresh panel visibility from the PTY's foreground process group and check
-	 * whether the panel overlay needs to be redrawn. Note that panel_poll() only
-	 * reports visibility transitions (hidden <-> visible), rather than every draw. */
-	if (panel_poll()) {
-		tfulldirt();
-	}
-	int panel_redraw = panel_needs_draw(term.dirty);
+	/* Snapshot panel visibility and redraw eligibility before drawregion() clears
+	 * terminal row-dirty flags. */
+	panel_poll(term.dirty);
 
 	drawregion(0, 0, term.col, term.row);
 	xdrawcursor(cx, term.c.y, term.line[term.c.y][cx],
@@ -2734,8 +2733,7 @@ draw(void)
 	/* Panel overlay: drawn after terminal content, before XCopyArea in xfinishdraw().
 	 * term.line is never modified, so hiding the panel restores the terminal content
 	 * untouched. */
-	if (panel_redraw)
-		panel_draw();
+	panel_draw();
 
 	xfinishdraw();
 	if (ocx != term.ocx || ocy != term.ocy)

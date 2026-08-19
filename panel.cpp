@@ -13,6 +13,7 @@
 #include <chrono>               // for std::chrono::steady_clock
 #include <cstdint>              // for uint32_t
 #include <cstring>              // for std::strcmp(), std::memcpy(), ...
+#include <cstdlib>              // for setenv()
 #include <ctime>                // for localtime_r(), std::strftime()
 #include <cstdio>               // for std::snprintf()
 #include <string>               // for std::string, std::to_string(), ...
@@ -233,7 +234,8 @@ std::string Panel::shell_cwd()
     char proc[32];
     std::snprintf(proc, sizeof(proc), "/proc/%d/cwd", static_cast<int>(m_shell_pid));
     ssize_t n = ::readlink(proc, buf, sizeof(buf) - 1);
-    if ( n <= 0 ) return {};
+    if ( n <= 0 )
+        die("read shell cwd failed: %s\n", n < 0 ? std::strerror(errno) : "empty path");
     return with_trailing_slash(std::string(buf, n));
 }
 
@@ -383,14 +385,25 @@ Panel::Panel()
     // The child shell inherits our current working directory (cwd) during the fork.
     char buf[PATH_MAX];
     // Cannot use shell_now() instead of getcwd() now until init() is called.
-    m_cwd = with_trailing_slash(::getcwd(buf, sizeof(buf)) ? buf : "");
+    if ( !::getcwd(buf, sizeof(buf)) )
+        die("get current cwd failed: %s\n", std::strerror(errno));
+    m_cwd = with_trailing_slash(buf);
     recompute_geometry();
+}
+
+void Panel::preinit()
+{
+    const char* socket_path = m_ipc.init();
+    if ( ::setenv("SC_SOCKET", socket_path, 1) < 0 )
+        die("set SC_SOCKET failed: %s\n", std::strerror(errno));
 }
 
 // Returns the total zsh-owned padding needed to place the prompt below the panel.
 int Panel::prompt_padding(int applied_padding) const
 {
-    const int prompt_y = std::max(0, m_cursor_y - applied_padding);
+    int cursor_y;
+    tgetcursor(nullptr, &cursor_y);
+    const int prompt_y = std::max(0, cursor_y - applied_padding);
     const bool cursor_obscured = visible()
         && prompt_y >= m_canvas.top() && prompt_y < m_canvas.top() + m_canvas.height();
     return cursor_obscured ? m_canvas.top() + m_canvas.height() - prompt_y : 0;
@@ -438,12 +451,11 @@ void Panel::init(int pty_fd, pid_t shell_pid)
     // Read the authoritative startup state once. Normal polling begins only after the
     // required adapter has installed all private ZLE bindings.
     m_shell_owns_tty = (::tcgetpgrp(m_pty_fd) == m_shell_pid);
-    if ( std::string cwd = shell_cwd(); !cwd.empty() )
-        m_cwd = std::move(cwd);
+    m_cwd = shell_cwd();
     load_entries({});
 }
 
-bool Panel::poll()
+void Panel::poll(int* term_dirty)
 {
     assert( m_pty_fd >= 0 && m_shell_pid > 0 );  // also asserts that .init() was called.
     const bool was_visible = visible();
@@ -456,7 +468,7 @@ bool Panel::poll()
         if ( !was_visible || m_cwd_changed ) {
             struct stat prev_dir_stat{};  // zero-initialized in case lstat() below fails.
             m_cwd_changed = false;
-            if ( std::string cwd = shell_cwd(); !cwd.empty() && cwd != m_cwd ) {
+            if ( std::string cwd = shell_cwd(); cwd != m_cwd ) {
                 ::lstat(m_cwd.c_str(), &prev_dir_stat);
                 m_cwd = cwd;
                 m_selected_idx = 0;  // Reset selection on a long jump (e.g. "cd /").
@@ -469,24 +481,25 @@ bool Panel::poll()
         }
     }
 
-    return was_visible != now_visible;
-}
+    if ( was_visible != now_visible ) {
+        const int top = clamp_between(m_canvas.top(), 0, m_term_rows - 1);
+        const int bottom = clamp_between(
+            m_canvas.top() + m_canvas.height() - 1, 0, m_term_rows - 1);
+        for ( int i = top ; i <= bottom ; ++i )
+            term_dirty[i] = 1;
+    }
 
-bool Panel::needs_draw(const int* term_dirty) const
-{
-    if ( !visible() ) return false;
-    if ( m_dirty ) return true;       // our own content changed
-
-    // Return true if terminal repainted a covered row.
-    return std::any_of(
+    m_needs_draw = now_visible && (was_visible != now_visible || m_dirty
+      || std::any_of(
         term_dirty + m_canvas.top(),
         term_dirty + m_canvas.top() + m_canvas.height(),
-        [](int d) { return d != 0; });
+        [](int dirty) { return dirty != 0; }));
 }
 
 void Panel::draw()
 {
-    if ( !visible() ) return;
+    if ( !m_needs_draw ) return;
+    m_needs_draw = false;
     render();           // no-op unless m_dirty
     m_canvas.present();  // re-blits over rows the terminal just redrew underneath us
 }
@@ -496,6 +509,25 @@ void Panel::resize(int cols, int rows)
     m_term_cols = cols;
     m_term_rows = rows;
     recompute_geometry();
+    m_prompt_refresh_deadline = std::chrono::steady_clock::now()
+        + std::chrono::milliseconds(kResizeSettleDelayMs);
+}
+
+void Panel::adjust_timeout(double& timeout_ms)
+{
+    if ( !m_prompt_refresh_deadline ) return;
+
+    const auto now = std::chrono::steady_clock::now();
+    if ( now >= *m_prompt_refresh_deadline ) {
+        m_prompt_refresh_deadline.reset();
+        refresh_prompt();
+        return;
+    }
+
+    const double remaining = std::chrono::duration<double, std::milli>(
+        *m_prompt_refresh_deadline - now).count();
+    if ( timeout_ms < 0 || remaining < timeout_ms )
+        timeout_ms = remaining;
 }
 
 void Panel::refresh_prompt()
@@ -510,6 +542,8 @@ void Panel::toggle_panel()
     m_dirty = true;
     if ( visible() )
         refresh_prompt();
+    // Repaint the overlay, or restore the terminal rows it covered when hidden.
+    ::redraw();
 }
 
 bool Panel::handle_key(unsigned long ksym, unsigned state, const char*, int)
@@ -553,7 +587,10 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char*, int)
 
         clamp_cursor:
             m_selected_idx = clamp_between(m_selected_idx, 0, std::max(0, n - 1));
-            m_dirty |= (old_selected_idx != m_selected_idx);
+            if ( old_selected_idx != m_selected_idx ) {
+                m_dirty = true;
+                ::draw();
+            }
             return true;
 
         case XK_Return:
@@ -583,23 +620,22 @@ namespace { Panel g_panel; }
 
 extern "C" {
 
-const char* panel_preinit(void) { return Panel::preinit(); }
+void panel_preinit(void) { Panel::preinit(); }
 int panel_ipc_fd(void) { return Panel::ipc_fd(); }
 void panel_service_ipc(void) { g_panel.service_ipc(); }
 void panel_cleanup_ipc(void) { Panel::cleanup_ipc(); }
 
 void panel_init(int pty_fd, pid_t shell_pid) { g_panel.init(pty_fd, shell_pid); }
-int  panel_poll(void) { return g_panel.poll(); }
-int  panel_needs_draw(const int* term_dirty) { return g_panel.needs_draw(term_dirty); }
+void panel_poll(int* term_dirty) { g_panel.poll(term_dirty); }
 void panel_draw(void) { g_panel.draw(); }
 
 void panel_resize(int cols, int rows) { g_panel.resize(cols, rows); }
-void panel_set_cursor(int, int y) { Panel::set_cursor(y); }
+void panel_adjust_timeout(double* timeout_ms) { g_panel.adjust_timeout(*timeout_ms); }
 void panel_notify_zsh_ready(void) { g_panel.notify_zsh_ready(); }
 void panel_notify_cwd_changed(void) { g_panel.notify_cwd_changed(); }
 void panel_refresh_prompt(void) { g_panel.refresh_prompt(); }
 
-void panel_toggle_panel(void) { g_panel.toggle_panel(); }
+void panel_toggle_panel(const Arg*) { g_panel.toggle_panel(); }
 int  panel_handle_key(unsigned long ksym, unsigned state, const char* buf, int len) {
     return g_panel.handle_key(ksym, state, buf, len);
 }

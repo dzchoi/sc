@@ -42,7 +42,7 @@ Startup proceeds as follows:
 1. `st.c:ttynew()` calls `panel_preinit()` before it forks.
 2. `Panel::preinit()` creates an owner-only Unix socket in a private `sc-*` directory
    under `$XDG_RUNTIME_DIR`, or under `/tmp` when the runtime directory is unavailable.
-3. `ttynew()` exports its path as `SC_SOCKET`; the child zsh inherits it.
+3. `panel_preinit()` exports its path as `SC_SOCKET`; the child zsh inherits it.
 4. The child zsh reads `.zshrc`, sources `sc.zsh`, installs ZLE widgets and
    bindings, then emits OSC `6770`.
 5. `Panel::init()` reads startup output through the normal terminal parser while waiting
@@ -116,8 +116,8 @@ than sampling `/proc/.../cwd` on every redraw.
 
 ## Prompt padding and redraw
 
-`st.c` reports the terminal cursor with `panel_set_cursor(x, y)`. The panel
-uses the cursor row to determine whether a prompt needs padding.
+The panel reads the terminal cursor through `tgetcursor()` when it determines whether
+a prompt needs padding.
 
 Before zsh renders or refreshes a prompt, `_sc_update_prompt` calls
 `scctl padding <applied_padding>`. SC removes the adapter's existing prompt-owned
