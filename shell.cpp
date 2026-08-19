@@ -14,7 +14,6 @@
 
 #include <sys/socket.h>         // for accept4(), bind(), listen(), socket()
 #include <sys/stat.h>           // for chmod()
-#include <sys/un.h>             // for sockaddr_un
 #include <unistd.h>             // for close(), getpid(), readlink(), ...
 
 #include "panel.hpp"            // for Panel
@@ -113,13 +112,11 @@ void Shell::service_ipc(const Panel& panel) const
     if ( client < 0 ) return;
 
     char request[32]{};
-    std::string reply = "E\n";
+    std::string reply;
     if ( const ssize_t n = ::read(client, request, sizeof(request) - 1); n > 0 ) {
         if ( std::strcmp(request, "selected\n") == 0 ) {
-            if ( const Panel::Entry* entry = panel.selected_entry() )
-                reply = std::string(entry->is_dir ? "D\t" : "F\t") + entry->name + "\n";
-            else
-                reply = "N\n";
+            if ( const auto entry = panel.selected_entry() )
+                reply = std::string(*entry) + "\n";
         }
 
         else if ( std::strncmp(request, "padding ", 8) == 0 && request[n - 1] == '\n' ) {
@@ -128,7 +125,7 @@ void Shell::service_ipc(const Panel& panel) const
             const char* last = request + n - 1;
             const auto result = std::from_chars(first, last, applied_padding);
             if ( result.ec == std::errc{} && result.ptr == last && applied_padding >= 0 )
-                reply = "P\t" + std::to_string(panel.prompt_padding(applied_padding)) + "\n";
+                reply = std::to_string(panel.prompt_padding(applied_padding)) + "\n";
         }
     }
 

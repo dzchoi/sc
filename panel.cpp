@@ -368,11 +368,11 @@ int Panel::prompt_padding(int applied_padding) const
     return cursor_obscured ? m_canvas.top() + m_canvas.height() - prompt_y : 0;
 }
 
-const Panel::Entry* Panel::selected_entry() const
+std::optional<std::string_view> Panel::selected_entry() const
 {
-    if ( !visible() ) return nullptr;
+    if ( !visible() ) return std::nullopt;
     assert( !m_entries.empty() );
-    return &m_entries[m_selected_idx];
+    return m_entries[m_selected_idx].name;
 }
 
 void Panel::init()

@@ -90,9 +90,12 @@ socket named by `SC_SOCKET`, sends the request, and prints the response.
 `x.c` adds `shell_ipc_fd()` to its `pselect()` fd set. On readiness it calls
 `shell_service_ipc()`, which dispatches to:
 
-- `Shell::service_ipc()` replies to `selected` with the type (`D` or `F`) plus entry name;
+- `Shell::service_ipc()` replies to `selected` with the entry name, or no payload when
+  the panel has no active selection. The Zsh widget checks the selected path's current
+  type before acting on it;
 - `Panel::prompt_padding(applied_padding)` for `padding <applied_padding>`: total
-  number of prompt-owned newlines needed after replacing the adapter's existing prefix.
+  number of prompt-owned newlines needed after replacing the adapter's existing prefix,
+  returned as a decimal integer.
 
 The process that creates the socket remains its sole cleanup owner across `fork()`.
 Normal `exit()` paths release it through `Shell`'s destructor. The `SIGCHLD` path calls

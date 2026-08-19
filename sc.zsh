@@ -15,18 +15,16 @@ _scctl() {
 _sc_get_selected_entry() {
     local reply
     reply=$(_scctl selected) || return 1
-    [[ $reply == $'D\t'* || $reply == $'F\t'* ]] || return 1
-    _sc_selected_entry_kind=${reply%%$'\t'*}
-    REPLY=${reply#*$'\t'}
+    [[ -n $reply ]] || return 1
+    REPLY=$reply
 }
 
 _sc_update_prompt() {
-    local reply pad prefix=''
+    local reply prefix=''
     reply=$(_scctl padding "$_sc_prompt_padding") || return
-    pad=${reply#*$'\t'}
-    [[ $pad == <-> ]] || return  # exit if $pad is not a non-negative integer.
-    repeat $pad; do prefix+=$'\n'; done
-    _sc_prompt_padding=$pad
+    [[ $reply == <-> ]] || return  # exit if reply is not a non-negative integer.
+    repeat $reply; do prefix+=$'\n'; done
+    _sc_prompt_padding=$reply
     PROMPT="${prefix}${_sc_prompt_base}"
 }
 
@@ -55,7 +53,7 @@ _sc_cd_parent() {
 
 _sc_cd_child() {
     _sc_get_selected_entry || return
-    [[ $_sc_selected_entry_kind == D ]] || return
+    [[ -d $REPLY ]] || return
     builtin cd -- "$REPLY" || return
     _sc_refresh_prompt
 }
@@ -85,7 +83,7 @@ _sc_enter() {
 
     # If not, enter the selected directory or execute the selected file.
     if _sc_get_selected_entry; then
-        if [[ $_sc_selected_entry_kind == D ]]; then
+        if [[ -d $REPLY ]]; then
             builtin cd -- "$REPLY" && _sc_refresh_prompt
         else
             BUFFER="${(q)${:-$PWD/$REPLY}}"

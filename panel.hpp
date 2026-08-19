@@ -20,6 +20,7 @@
 #include <chrono>               // for std::chrono::steady_clock
 #include <optional>             // for std::optional<>
 #include <string>               // for std::string
+#include <string_view>          // for std::string_view
 #include <sys/types.h>          // for off_t, time_t
 #include <vector>               // for std::vector<>
 
@@ -46,9 +47,12 @@ public:
     Panel(Panel&&) =default;
     Panel& operator=(Panel&&) =default;
 
-    // Queries used by Shell while serving adapter requests.
+    // Returns the total prompt-owned padding needed to keep the prompt below the panel.
     int prompt_padding(int applied_padding) const;
-    const Entry* selected_entry() const;
+
+    // Returns the active entry's name, if any. The view remains valid until the
+    // directory snapshot is rebuilt.
+    std::optional<std::string_view> selected_entry() const;
 
     // Builds the initial directory snapshot after Shell has established the shell state.
     void init();
@@ -88,8 +92,8 @@ private:
     static constexpr int kResizeSettleDelayMs = 150;
     std::optional<std::chrono::steady_clock::time_point> m_prompt_refresh_deadline;
 
-    std::string m_cwd;             // the current working directory
-    std::vector<Entry> m_entries;  // cache of the entries in m_cwd, always ends with '/'
+    std::string m_cwd;             // current directory, always ending with '/'
+    std::vector<Entry> m_entries;  // cached entries in m_cwd
     int m_selected_idx = 0;        // index into m_entries of the highlighted row
     int m_first_visible_idx = 0;   // index into m_entries of the first visible row
 

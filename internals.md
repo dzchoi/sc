@@ -105,6 +105,9 @@ monotonic clock and refreshes the prompt after geometry settles.
   according to their boundary; terminal callbacks needed by the panel (`draw`,
   `redraw`, `tgetcursor`) are declared by the terminal interface rather than mirrored
   in panel state.
+- Expose only the selected entry name outside `Panel`. Zsh checks the path's current
+  type immediately before acting instead of treating cached panel metadata as the
+  execution authority.
 - Treat the current directory as data, not a lifecycle flag. Adapter readiness and a
   pending cwd refresh have separate meanings and remain explicit state.
 - Keep alternate-screen startup behavior in terminfo rather than coupling it to the
@@ -123,11 +126,11 @@ monotonic clock and refreshes the prompt after geometry settles.
       local -a command
       case $action in
           view)
-              [[ $_sc_selected_entry_kind == F ]] || return
+              [[ -f $REPLY ]] || return
               command=("${PAGER:-less}")
               ;;
           edit)
-              [[ $_sc_selected_entry_kind == F ]] || return
+              [[ -f $REPLY ]] || return
               command=("${EDITOR:-vi}")
               ;;
           *)
