@@ -73,6 +73,8 @@ Press `Ctrl+O` to show or hide the panel. When it is visible:
 | `Ctrl+Page Down` | Change to the selected directory |
 | `Ctrl+Enter` | Add the selected name to the command line |
 | `Ctrl+Shift+Enter` | Add the selected full path to the command line |
+| `F3` | View the selected entry with `less` |
+| `F4` | Edit the selected entry with `vi` |
 | `Enter` | Run the typed command, or act on the selected entry |
 
 With an empty command line, `Enter` changes into a selected directory. For a
@@ -80,10 +82,15 @@ selected file, it places the shell-quoted path on the command line and runs it.
 When a command is already being edited, `Enter` behaves normally and runs that
 command.
 
+Function-key actions such as `F3` and `F4` are configurable in `sc.zsh` through
+the `SC_USER_COMMANDS` associative array near the top of the file. A standalone
+`{}` argument is replaced with the selected entry's absolute path; if `{}` is
+absent, the path is appended to the configured command.
+
 ## Current scope
 
 SC is a local-filesystem navigator. It does not yet include file copy/move
-commands, a viewer/editor, archive or VFS support, or mouse file management.
+commands, archive or VFS support, or mouse file management.
 
 ## License
 

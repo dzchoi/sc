@@ -108,6 +108,11 @@ monotonic clock and refreshes the prompt after geometry settles.
 - Expose only the selected entry name outside `Panel`. Zsh checks the path's current
   type immediately before acting instead of treating cached panel metadata as the
   execution authority.
+- Before user commands invalidate ZLE and write to the terminal, they discard the old
+  prompt's padding so ZLE's automatic redisplay re-expands the unpadded prompt. Command
+  output may have moved the cursor past the old prompt; reusing its padding would push
+  the next prompt down, while explicitly resetting it would clear command output before
+  the new prompt is drawn.
 - Treat the current directory as data, not a lifecycle flag. Adapter readiness and a
   pending cwd refresh have separate meanings and remain explicit state.
 - Keep alternate-screen startup behavior in terminfo rather than coupling it to the
@@ -117,40 +122,6 @@ monotonic clock and refreshes the prompt after geometry settles.
   installed terminfo database unchanged.
 
 ## To-do
-* View and Edit
-  ```
-  _sc_run_selected() {
-      local action=$1
-      _sc_get_selected_entry || return
-
-      local -a command
-      case $action in
-          view)
-              [[ -f $REPLY ]] || return
-              command=("${PAGER:-less}")
-              ;;
-          edit)
-              [[ -f $REPLY ]] || return
-              command=("${EDITOR:-vi}")
-              ;;
-          *)
-              return 1
-              ;;
-      esac
-
-      zle -I
-      command "${command[@]}" -- "$PWD/$REPLY"
-      zle reset-prompt
-  }
-
-  _sc_view() {
-      _sc_run_selected view
-  }
-
-  _sc_edit() {
-      _sc_run_selected edit
-  }
-  ```
 
 ### Appearance
   - It has a ungly default application icon now.
@@ -166,8 +137,6 @@ monotonic clock and refreshes the prompt after geometry settles.
   - Scroll back with mouse wheel.
 
 ### Key customization
-  - F3: (colored) `less $0`
-  - F4: `vim $0` (not gvim)
   - F5: fast copy using rsync?
   - ??: diff directories, ...
   - Show memory usage, ...

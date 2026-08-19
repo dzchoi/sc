@@ -6,6 +6,13 @@
 typeset -g _sc_prompt_base=$PROMPT
 typeset -g _sc_prompt_padding=0
 
+# Maps ZLE key sequences to user commands for the selected entry. A standalone `{}` is
+# replaced by its absolute path; when omitted, the path is appended.
+typeset -gA SC_USER_COMMANDS=(
+    $'\eOR' 'less -- {}'        # F3
+    $'\eOS' 'vi -- {}'          # F4
+)
+
 # Enable SC's private input bindings only after ZLE has installed them below.
 
 _scctl() {
@@ -62,8 +69,8 @@ _sc_cd_child() {
 # properly shell-quoted.
 _sc_insert_selected_name() {
     _sc_get_selected_entry || return
-    local path=$REPLY
-    BUFFER+="${(q)path:t}"
+    local selected_path=$REPLY
+    BUFFER+="${(q)selected_path:t}"
     CURSOR=${#BUFFER}
 }
 
@@ -72,6 +79,33 @@ _sc_insert_selected_path() {
     _sc_get_selected_entry || return
     BUFFER+="${(q)${:-$PWD/$REPLY}}"
     CURSOR=${#BUFFER}
+}
+
+_sc_run_user_command() {
+    local action=${SC_USER_COMMANDS[$KEYS]-}
+    [[ -n $action ]] || return
+    _sc_get_selected_entry || return
+
+    local -a argv
+    argv=(${(Q)${(z)action}})
+    (( $#argv )) || return
+
+    # `path` is Zsh's special array tied to PATH.
+    local selected_path=$PWD/$REPLY
+    local -i replaced=0 i
+    for (( i = 1; i <= $#argv; ++i )); do
+        if [[ ${argv[i]} == '{}' ]]; then
+            argv[i]=$selected_path
+            replaced=1
+        fi
+    done
+    (( replaced )) || argv+=("$selected_path")
+
+    # The redisplay after command output must not reuse this prompt's placement lines.
+    _sc_prompt_padding=0
+    PROMPT=$_sc_prompt_base
+    zle -I
+    command "${argv[@]}"
 }
 
 _sc_enter() {
@@ -99,6 +133,7 @@ zle -N _sc_cd_parent
 zle -N _sc_cd_child
 zle -N _sc_insert_selected_name
 zle -N _sc_insert_selected_path
+zle -N _sc_run_user_command
 zle -N _sc_enter
 
 bindkey '\e[6770~' _sc_cd_parent
@@ -108,6 +143,12 @@ bindkey '\e[6773~' _sc_insert_selected_path
 bindkey '\e[6774~' _sc_refresh_prompt
 bindkey '^M' _sc_enter
 bindkey '^J' _sc_enter
+() {
+    local key
+    for key in "${(@k)SC_USER_COMMANDS}"; do
+        bindkey "$key" _sc_run_user_command
+    done
+}
 
 # Emit OSC escape code to indicate SC zsh adapter ready.
 printf '\e]6770\a'

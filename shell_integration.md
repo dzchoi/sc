@@ -72,6 +72,12 @@ a ZLE widget. `_sc_cd_child`, for example, queries SC for the selected item and
 runs `builtin cd -- "$REPLY"` only when that item is a directory. ZLE retains
 the current `BUFFER` throughout this operation.
 
+F3 and F4 remain ordinary terminal key sequences and are bound directly by `sc.zsh`.
+`SC_USER_COMMANDS` maps those sequences to command argument strings. The shared
+widget queries SC for the selected name, substitutes its absolute path for a standalone
+`{}` argument (or appends it when absent), and executes the resulting argument vector
+without evaluating it as shell code.
+
 Plain Enter is deliberately not consumed by the panel. `_sc_enter` owns it:
 
 - non-empty `BUFFER`: invoke `zle .accept-line`;
@@ -130,6 +136,10 @@ starts each new prompt with `applied_padding` set to zero.
 
 ZLE emits and tracks these newlines itself, so its display model remains valid.
 SC never moves the terminal cursor or fakes a `SIGWINCH` to uncover a prompt.
+
+Before invalidating ZLE for a user command, `sc.zsh` discards the padding owned by the
+old prompt. ZLE therefore re-expands an unpadded prompt after command output instead of
+reusing the old prompt's placement newlines at the new cursor position.
 
 zle reset-prompt repaints the current editing line in place: it re-expands and replaces the existing prompt, then redraws the unchanged
   $BUFFER. It does not accept the line or add a new newline/prompt.
