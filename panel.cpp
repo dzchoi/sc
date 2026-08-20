@@ -7,11 +7,11 @@
 // The C API forwards to a single hidden Panel instance (g_panel). No C++ types leak
 // across the ABI.
 
-#include <algorithm>            // for std::any_of(), std::lower_bound(), ...
+#include <algorithm>            // for std::any_of(), std::find_if(), std::sort(), ...
 #include <cassert>              // for assert()
 #include <chrono>               // for std::chrono::steady_clock
 #include <cstdint>              // for uint32_t
-#include <cstring>              // for std::strcmp(), std::strerror()
+#include <cstring>              // for std::strcmp(), std::strerror(), std::memset()
 #include <ctime>                // for localtime_r(), std::strftime()
 #include <string>               // for std::string, std::to_string(), ...
 #include <utility>              // for std::move(), std::pair()
@@ -127,76 +127,47 @@ void Panel::recompute_geometry()
     m_dirty = true;
 }
 
-void Panel::load_entries(const struct stat& prev_dir_stat)
+void Panel::load_entries(std::string_view prev_path)
 {
     m_entries.clear();
 
-    // prev_dir_stat remains zeroed on the first preprompt, on a same-cwd reload, or
-    // when the directory being left can no longer be `stat`ed. Only successful lstat()
-    // entries participate in matching. ".." is kept as a recovery entry even when its
-    // stat fails, with its size and mtime left at their defaults; an ordinary entry
-    // whose stat fails because it disappeared or became inaccessible during the scan is
-    // omitted from this snapshot.
-
     // Manually add ".." as the first entry in case the filesystem's readdir() does not
     // enumerate it.
-    Entry dotdot{"..", true, 0};
-    struct stat st{};
-    bool matched = false;
-    if ( ::lstat((m_cwd + "..").c_str(), &st) == 0 ) {
-        dotdot.size  = st.st_size;
-        dotdot.mtime = st.st_mtime;
-        matched = (st.st_dev == prev_dir_stat.st_dev
-            && st.st_ino == prev_dir_stat.st_ino);
-    }
-    m_entries.push_back(std::move(dotdot));
+    m_entries.emplace_back("..", true, 0, 0);
 
     if ( DIR* dir = ::opendir(m_cwd.c_str()) ) {
         while ( auto* dirent = ::readdir(dir) ) {
             if ( std::strcmp(dirent->d_name, ".")  == 0 ) continue;
             if ( std::strcmp(dirent->d_name, "..") == 0 ) continue;
-            Entry e;
-            e.name = dirent->d_name;
-            const std::string full = m_cwd + e.name;
+            const std::string entry_path = m_cwd + dirent->d_name;
             struct stat st;
-            if ( ::lstat(full.c_str(), &st) != 0 ) continue;
-            e.is_dir = S_ISDIR(st.st_mode);
-            e.size   = st.st_size;
-            e.mtime  = st.st_mtime;
-
-            // Insert `e` at its sorted position (".." first, then dirs, then files).
-            auto it = std::lower_bound(m_entries.begin(), m_entries.end(), e,
-                [](const Entry& a, const Entry& b) {
-                    if ( a.name == ".." ) return true;
-                    if ( b.name == ".." ) return false;
-                    if ( a.is_dir != b.is_dir ) return a.is_dir;
-                    return a.name < b.name;
-                });
-            const int idx = static_cast<int>(it - m_entries.begin());
-            m_entries.emplace(it, std::move(e));
-
-            if ( matched ) {
-                // Any later insertion landing at or before m_selected_idx shifts
-                // m_selected_idx one slot to the right.
-                if ( idx <= m_selected_idx ) ++m_selected_idx;
-            }
-            else {
-                matched = (st.st_dev == prev_dir_stat.st_dev
-                    && st.st_ino == prev_dir_stat.st_ino);
-                if ( matched ) m_selected_idx = idx;
-            }
+            if ( ::lstat(entry_path.c_str(), &st) != 0 )
+                std::memset(&st, 0, sizeof(st));
+            m_entries.emplace_back(dirent->d_name, S_ISDIR(st.st_mode), st.st_size,
+                st.st_mtime);
         }
-
         ::closedir(dir);
     }
 
-    // Fall back to the old m_selected_idx if prev_dir_stat was not found (e.g. after a
-    // same-dir reload, or if the target no longer exists).
-    if ( !matched ) {
-        const int n = static_cast<int>(m_entries.size());
-        m_selected_idx = clamp_between(m_selected_idx, 0, std::max(0, n - 1));
+    // ".." is already first; order the remaining snapshot as directories, then files.
+    std::sort(m_entries.begin() + 1, m_entries.end(),
+        [](const Entry& a, const Entry& b) {
+            if ( a.is_dir != b.is_dir ) return a.is_dir;
+            return a.name < b.name;
+        });
+
+    // A missing slash yields name_pos == 0, which cannot match nonempty m_cwd.
+    const size_t name_pos = prev_path.rfind('/') + 1;
+    if ( m_cwd.size() == name_pos && prev_path.substr(0, name_pos) == m_cwd ) {
+        const std::string_view prev_name = prev_path.substr(name_pos);
+        const auto it = std::find_if(m_entries.begin() + 1, m_entries.end(),
+            [&](const Entry& entry) { return entry.name == prev_name; });
+        if ( it != m_entries.end() )
+            m_selected_idx = static_cast<int>(it - m_entries.begin());
     }
-    m_first_visible_idx = 0;
+
+    m_selected_idx = clamp_between(
+        m_selected_idx, 0, static_cast<int>(m_entries.size()) - 1);
     m_dirty = true;
 }
 
@@ -344,15 +315,22 @@ int Panel::handle_preprompt(std::string cwd, int applied_padding)
 {
     // Every preprompt request reconciles m_cwd and rebuilds m_entries[] before
     // computing prompt padding.
-    struct stat prev_dir_stat{};
+    std::string prev_path;
     if ( cwd != m_cwd ) {
-        // The first prompt has no previous cwd. Later changes preserve the directory
-        // being left when it remains an entry in the new cwd.
-        if ( !m_cwd.empty() ) ::lstat(m_cwd.c_str(), &prev_dir_stat);
+        // Preserve the directory being left when its absolute path names an ordinary
+        // entry in the new cwd. Descending retains the index-zero ".." default.
+        // Root cannot be an ordinary entry; other cwd paths omit their trailing slash.
+        if ( m_cwd.size() > 1 ) {
+            prev_path = m_cwd;
+            prev_path.pop_back();
+        }
         m_cwd = std::move(cwd);
         m_selected_idx = 0;
     }
-    load_entries(prev_dir_stat);
+    else if ( !m_entries.empty() ) {
+        prev_path = m_cwd + m_entries[m_selected_idx].name;
+    }
+    load_entries(prev_path);
 
     // Recover the prompt's row before its existing SC-owned newline prefix, then add
     // only enough newlines to place that row below the visible panel.
@@ -478,8 +456,7 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char*, int)
                 m_selected_idx += list_rows;
                 goto clamp_cursor;
             }
-            if ( m_entries[m_selected_idx].is_dir )
-                g_shell.send_event(ZleEvent::CdChild);
+            g_shell.send_event(ZleEvent::CdChild);
             return true;
 
         clamp_cursor:

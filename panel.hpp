@@ -22,14 +22,11 @@
 #include <string>               // for std::string
 #include <string_view>          // for std::string_view
 #include <sys/types.h>          // for off_t, time_t
+#include <utility>              // for std::move()
 #include <vector>               // for std::vector<>
 
 #include "canvas.hpp"           // for Canvas, Draw
 #include "sc_config.hpp"        // for SC configuration constants
-
-struct stat;
-
-
 
 class Panel {
 public:
@@ -39,6 +36,10 @@ public:
         bool    is_dir = false;
         off_t   size = 0;
         time_t  mtime = 0;
+
+        Entry(std::string name, bool is_dir, off_t size, time_t mtime)
+        : name(std::move(name)), is_dir(is_dir), size(size), mtime(mtime)
+        {}
     };
 
     Panel() { recompute_geometry(); }
@@ -121,11 +122,9 @@ private:
 
     void recompute_geometry();
 
-    // Rebuilds m_entries[] from m_cwd. prev_dir_stat is the previous directory's stat,
-    // used to re-locate that directory among the new entries (e.g. ".." after
-    // descending, or the subdir just left after ascending) and re-seat m_selected_idx on
-    // it.
-    void load_entries(const struct stat& prev_dir_stat);
+    // Rebuilds m_entries[] from m_cwd and re-seats m_selected_idx when the absolute,
+    // non-slash-terminated prev_path names an ordinary entry in the new snapshot.
+    void load_entries(std::string_view prev_path);
 
     void render();
 };

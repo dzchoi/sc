@@ -71,8 +71,16 @@ boundary, `m_cwd` is slash-terminated and `m_entries` is nonempty. `Shell::get_c
 reads the shell directory through `/proc/<shell-pid>/cwd`. If that directory has been
 unlinked, Linux returns a path marked `(deleted)` that cannot be reopened by name;
 `load_entries()` retains the synthetic `..` recovery entry so the shell can leave it.
-During normal scans, entries that disappear or become inaccessible between `readdir()`
-and `lstat()` are omitted from the snapshot.
+Names returned by `readdir()` remain in the snapshot when `lstat()` fails; their cached
+type, size, and mtime stay at non-directory/zero defaults. Cached type controls only
+presentation; Zsh validates the selected live path before directory navigation.
+
+Reloading preserves selection by absolute entry path after sorting the new snapshot.
+On a cwd change, the previous cwd is the candidate path to restore; ascending to its
+direct parent therefore selects the directory just left, while descending keeps the
+synthetic `..` index-zero default. On a same-cwd reload, the selected entry's absolute
+path is restored when it remains. Reloading retains the viewport; `render()` moves it
+only when needed to keep the restored selection visible.
 
 `scctl preprompt` is the synchronous preprompt boundary. It reads the shell cwd,
 reconciles a cwd change, reloads entries even when the cwd is unchanged, and finally
