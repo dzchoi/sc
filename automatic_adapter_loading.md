@@ -5,7 +5,7 @@
 SC should load its required zsh adapter automatically without modifying the user's
 startup files or injecting shell commands through the PTY. The user's normal zsh
 configuration must retain its ordering and `ZDOTDIR` behavior, and `Shell::init()` must
-not return until the adapter is ready.
+not return until the adapter has sent the first preprompt request.
 
 ## Startup invariant
 
@@ -13,8 +13,8 @@ Before normal panel polling, IPC service, or input handling begins:
 
 - the user's applicable zsh startup files have completed;
 - `sc.zsh` has installed its hooks, widgets, and private key bindings;
-- OSC `6770` has confirmed readiness;
-- the panel has read the shell's foreground ownership and authoritative cwd.
+- the first `scctl preprompt` request has established the panel's authoritative cwd and
+  nonempty directory snapshot.
 
 Adapter startup and later panel actions are separate mechanisms. Startup uses zsh's
 startup-file mechanism; runtime actions continue to use fixed private ZLE events. SC
@@ -46,12 +46,12 @@ The `.zshrc` proxy performs these operations in order:
 
 1. Source the user's effective `.zshrc`.
 2. Source SC's adapter.
-3. For a non-login shell, emit OSC `6770` and restore the user's final `ZDOTDIR`.
+3. For a non-login shell, restore the user's final `ZDOTDIR`.
 
 For a login shell, keep the proxy directory active until `.zlogin`. Its proxy sources
-the user's effective `.zlogin`, emits OSC `6770`, and then restores the user's final
-`ZDOTDIR`. No `.zlogout` proxy is required because zsh will subsequently select the
-user's own `.zlogout` through the restored `ZDOTDIR`.
+the user's effective `.zlogin` and then restores the user's final `ZDOTDIR`. No
+`.zlogout` proxy is required because zsh will subsequently select the user's own
+`.zlogout` through the restored `ZDOTDIR`.
 
 System-wide startup files remain under zsh's control and retain their normal ordering
 relative to each proxied user file.
@@ -75,16 +75,13 @@ not executable as applicable.
 ## Readiness ownership
 
 Make `sc.zsh` idempotent so an existing manual integration does not install duplicate
-hooks or bindings. SC sets a private variable requesting deferred readiness; while it
-is set, sourcing `sc.zsh` installs the adapter without emitting OSC `6770`.
+hooks or bindings. The first `precmd` invocation naturally occurs after all applicable
+startup files, so its `scctl preprompt` request is the sole readiness signal even when an
+existing manual integration sourced the adapter earlier.
 
-The startup proxy owns the readiness notification and emits it exactly once, after the
-last applicable user startup file. This prevents an old manual `source sc.zsh` line from
-allowing `Shell::init()` to finish before the remainder of `.zshrc` or `.zlogin`.
-
-`Shell::init()` retains the bounded wait. After OSC `6770`, `shell_init()` invokes
-`Panel::init()` to initialize `cwd_` and the directory entries.
-No startup-specific condition is needed in `visible()`, `poll()`, or `handle_key()`.
+`Shell::init()` polls startup PTY output and the control socket within one bounded wait.
+It returns only after servicing a valid preprompt request, which initializes the panel cwd
+and directory entries before replying to zsh.
 
 ## Environment boundary
 
@@ -138,11 +135,11 @@ regains the PTY.
 
 Invocations such as `zsh -f`, or user startup code that disables `RCS` before the
 `.zshrc` stage, bypass the mechanism SC requires. They should fail through the existing
-adapter-readiness deadline with a configuration diagnostic rather than fall back to a
+prompt-readiness deadline with a configuration diagnostic rather than fall back to a
 partially integrated shell.
 
-The readiness timeout covers the user's complete applicable startup sequence, not only
-the execution time of `sc.zsh`.
+The prompt timeout covers the user's complete applicable startup sequence, not only the
+execution time of `sc.zsh`.
 
 ## Verification
 
@@ -156,7 +153,7 @@ Cover at least these cases:
 - login and non-login shells;
 - paths containing spaces;
 - missing `sc.zsh` or `scctl`;
-- the one-second readiness timeout;
+- the one-second first-preprompt timeout;
 - nested zsh processes not inheriting the outer integration;
 - final cwd changes made during startup;
 - normal-exit and `SIGCHLD` cleanup;

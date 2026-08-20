@@ -31,10 +31,10 @@ void shell_service_ipc(void);
  * harmless in the forked shell process. */
 void shell_cleanup_ipc(void);
 
-/* Called once from ttynew() after the shell is forked. Waits up to
- * kZshReadyTimeoutMs for the required adapter before returning. Must be called before
- * panel_poll() and panel_draw(). pty_fd is the master PTY fd; shell_pid is the forked
- * shell's PID. */
+/* Called once from ttynew() after the shell is forked. Services startup PTY and IPC
+ * activity until the first preprompt request establishes the panel snapshot. Must be
+ * called before panel_poll() and panel_draw(). pty_fd is the master PTY fd; shell_pid
+ * is the forked shell's PID. */
 void shell_init(int pty_fd, pid_t shell_pid);
 
 /* Synchronize panel state and mark its covered terminal rows dirty when visibility
@@ -51,8 +51,6 @@ void panel_resize(int cols, int rows);
  * timeout represents an unbounded wait. */
 void panel_adjust_timeout(double* timeout_ms);
 
-void shell_notify_zsh_ready(void);
-void shell_notify_cwd_changed(void);
 void panel_refresh_prompt(void);
 
 /* Ctrl+O handler. Toggles the panel and dirties the terminal rows it covers. */

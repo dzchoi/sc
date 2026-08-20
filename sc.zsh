@@ -28,7 +28,7 @@ _sc_get_selected_entry() {
 
 _sc_update_prompt() {
     local reply prefix=''
-    reply=$(_scctl padding "$_sc_prompt_padding") || return
+    reply=$(_scctl preprompt "$_sc_prompt_padding") || return
     [[ $reply == <-> ]] || return  # exit if reply is not a non-negative integer.
     repeat $reply; do prefix+=$'\n'; done
     _sc_prompt_padding=$reply
@@ -42,11 +42,6 @@ _sc_precmd() {
 autoload -Uz add-zsh-hook
 # _sc_precmd will be called just before each new shell prompt is printed.
 add-zsh-hook precmd _sc_precmd
-
-_sc_cwd_changed() {
-    printf '\e]6771\a'
-}
-add-zsh-hook chpwd _sc_cwd_changed
 
 _sc_refresh_prompt() {
     _sc_update_prompt
@@ -105,6 +100,7 @@ _sc_run_user_command() {
     _sc_prompt_padding=0
     PROMPT=$_sc_prompt_base
     zle -I
+    # Each array element is passed as one argument, so no additional quoting is needed.
     command "${argv[@]}"
 }
 
@@ -149,6 +145,3 @@ bindkey '^J' _sc_enter
         bindkey "$key" _sc_run_user_command
     done
 }
-
-# Emit OSC escape code to indicate SC zsh adapter ready.
-printf '\e]6770\a'

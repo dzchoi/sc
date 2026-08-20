@@ -1946,12 +1946,6 @@ strhandle(void)
 				}
 			}
 			return;
-		case 6770: /* SC zsh adapter ready */
-			shell_notify_zsh_ready();
-			return;
-		case 6771: /* SC zsh adapter reports a shell cwd change */
-			shell_notify_cwd_changed();
-			return;
 		case 10: /* set dynamic VT100 text foreground color */
 		case 11: /* set dynamic VT100 text background color */
 		case 12: /* set dynamic text cursor color */

@@ -9,7 +9,6 @@
 
 #include <algorithm>            // for std::any_of(), std::lower_bound(), ...
 #include <cassert>              // for assert()
-#include <cerrno>               // for errno, EINTR
 #include <chrono>               // for std::chrono::steady_clock
 #include <cstdint>              // for uint32_t
 #include <cstring>              // for std::strcmp(), std::strerror()
@@ -18,10 +17,8 @@
 #include <utility>              // for std::move(), std::pair()
 
 #include <dirent.h>             // for DIR, opendir(), ...
-#include <limits.h>             // for PATH_MAX
 #include <sys/stat.h>           // for struct stat, lstat(), ...
 #include <sys/types.h>          // for off_t, pid_t, time_t
-#include <unistd.h>             // for getcwd()
 #include <X11/X.h>              // for ControlMask, ShiftMask
 #include <X11/keysym.h>         // for XK_*
 
@@ -44,13 +41,6 @@ template <typename T>
 constexpr T clamp_between(T v, T lo, T hi)
 {
     return v < lo ? lo : (v > hi ? hi : v);
-}
-
-// Appends a trailing '/' unless already present (e.g. root "/").
-static std::string with_trailing_slash(std::string s)
-{
-    if ( s.empty() || s.back() != '/' ) s.push_back('/');
-    return s;
 }
 
 // Human-readable size, fits in Panel::kColsSize cells (right-aligned when printed).
@@ -112,7 +102,8 @@ std::pair<std::string, std::string> format_mtime(time_t mtime)
 
 bool Panel::visible() const
 {
-    return g_shell.owns_pty() && !m_hidden && m_canvas.width() > 0 && m_canvas.height() > 0;
+    return g_shell.owns_pty() && !m_hidden
+        && m_canvas.width() > 0 && m_canvas.height() > 0;
 }
 
 void Panel::recompute_geometry()
@@ -140,6 +131,13 @@ void Panel::load_entries(const struct stat& prev_dir_stat)
 {
     m_entries.clear();
 
+    // prev_dir_stat remains zeroed on the first preprompt, on a same-cwd reload, or
+    // when the directory being left can no longer be `stat`ed. Only successful lstat()
+    // entries participate in matching. ".." is kept as a recovery entry even when its
+    // stat fails, with its size and mtime left at their defaults; an ordinary entry
+    // whose stat fails because it disappeared or became inaccessible during the scan is
+    // omitted from this snapshot.
+
     // Manually add ".." as the first entry in case the filesystem's readdir() does not
     // enumerate it.
     Entry dotdot{"..", true, 0};
@@ -148,24 +146,23 @@ void Panel::load_entries(const struct stat& prev_dir_stat)
     if ( ::lstat((m_cwd + "..").c_str(), &st) == 0 ) {
         dotdot.size  = st.st_size;
         dotdot.mtime = st.st_mtime;
-        matched = (st.st_dev == prev_dir_stat.st_dev && st.st_ino == prev_dir_stat.st_ino);
-        if ( matched ) m_selected_idx = 0;
+        matched = (st.st_dev == prev_dir_stat.st_dev
+            && st.st_ino == prev_dir_stat.st_ino);
     }
     m_entries.push_back(std::move(dotdot));
 
-    if ( DIR* d = ::opendir(m_cwd.c_str()) ) {
-        while ( auto* de = ::readdir(d) ) {
-            if ( std::strcmp(de->d_name, ".")  == 0 ) continue;
-            if ( std::strcmp(de->d_name, "..") == 0 ) continue;
+    if ( DIR* dir = ::opendir(m_cwd.c_str()) ) {
+        while ( auto* dirent = ::readdir(dir) ) {
+            if ( std::strcmp(dirent->d_name, ".")  == 0 ) continue;
+            if ( std::strcmp(dirent->d_name, "..") == 0 ) continue;
             Entry e;
-            e.name = de->d_name;
+            e.name = dirent->d_name;
             const std::string full = m_cwd + e.name;
-            struct stat st{};  // zeroed each iteration in case lstat() below fails.
-            if ( ::lstat(full.c_str(), &st) == 0 ) {
-                e.is_dir = S_ISDIR(st.st_mode);
-                e.size   = st.st_size;
-                e.mtime  = st.st_mtime;
-            }
+            struct stat st;
+            if ( ::lstat(full.c_str(), &st) != 0 ) continue;
+            e.is_dir = S_ISDIR(st.st_mode);
+            e.size   = st.st_size;
+            e.mtime  = st.st_mtime;
 
             // Insert `e` at its sorted position (".." first, then dirs, then files).
             auto it = std::lower_bound(m_entries.begin(), m_entries.end(), e,
@@ -184,18 +181,17 @@ void Panel::load_entries(const struct stat& prev_dir_stat)
                 if ( idx <= m_selected_idx ) ++m_selected_idx;
             }
             else {
-                matched = (st.st_dev == prev_dir_stat.st_dev && st.st_ino == prev_dir_stat.st_ino);
+                matched = (st.st_dev == prev_dir_stat.st_dev
+                    && st.st_ino == prev_dir_stat.st_ino);
                 if ( matched ) m_selected_idx = idx;
             }
         }
 
-        ::closedir(d);
+        ::closedir(dir);
     }
-    // The case `d == nullptr` can happen when the current directory is deleted or
-    // permission-changed while we are still in it.
 
-    // Fall back to the old m_selected_idx if prev_dir_stat was not found (e.g. after a same-dir
-    // reload, or if the target no longer exists).
+    // Fall back to the old m_selected_idx if prev_dir_stat was not found (e.g. after a
+    // same-dir reload, or if the target no longer exists).
     if ( !matched ) {
         const int n = static_cast<int>(m_entries.size());
         m_selected_idx = clamp_between(m_selected_idx, 0, std::max(0, n - 1));
@@ -344,22 +340,22 @@ void Panel::render()
 
 
 
-Panel::Panel()
+int Panel::handle_preprompt(std::string cwd, int applied_padding)
 {
-    // Constructed during static initialization, before the shell is forked from `st`.
-    // The child shell inherits our current working directory (cwd) during the fork.
-    char buf[PATH_MAX];
-    // Shell::get_cwd() requires the shell PID, which Shell::init() will set after the
-    // fork.
-    if ( !::getcwd(buf, sizeof(buf)) )
-        die("get current cwd failed: %s\n", std::strerror(errno));
-    m_cwd = with_trailing_slash(buf);
-    recompute_geometry();
-}
+    // Every preprompt request reconciles m_cwd and rebuilds m_entries[] before
+    // computing prompt padding.
+    struct stat prev_dir_stat{};
+    if ( cwd != m_cwd ) {
+        // The first prompt has no previous cwd. Later changes preserve the directory
+        // being left when it remains an entry in the new cwd.
+        if ( !m_cwd.empty() ) ::lstat(m_cwd.c_str(), &prev_dir_stat);
+        m_cwd = std::move(cwd);
+        m_selected_idx = 0;
+    }
+    load_entries(prev_dir_stat);
 
-// Returns the total zsh-owned padding needed to place the prompt below the panel.
-int Panel::prompt_padding(int applied_padding) const
-{
+    // Recover the prompt's row before its existing SC-owned newline prefix, then add
+    // only enough newlines to place that row below the visible panel.
     int cursor_y;
     tgetcursor(nullptr, &cursor_y);
     const int prompt_y = std::max(0, cursor_y - applied_padding);
@@ -375,36 +371,10 @@ std::optional<std::string_view> Panel::selected_entry() const
     return m_entries[m_selected_idx].name;
 }
 
-void Panel::init()
-{
-    m_cwd = with_trailing_slash(g_shell.get_cwd());
-    load_entries({});
-}
-
 void Panel::poll(int* term_dirty)
 {
     const bool was_visible = m_was_visible;
     const bool now_visible = visible();
-
-    if ( now_visible ) {
-        // zsh reports chpwd through the private OSC. Reconcile that event against the
-        // shell's actual cwd via /proc.
-        if ( !was_visible || m_cwd_changed ) {
-            struct stat prev_dir_stat{};  // zero-initialized in case lstat() below fails.
-            m_cwd_changed = false;
-            if ( std::string cwd = with_trailing_slash(g_shell.get_cwd())
-              ; cwd != m_cwd ) {
-                ::lstat(m_cwd.c_str(), &prev_dir_stat);
-                m_cwd = cwd;
-                m_selected_idx = 0;  // Reset selection on a long jump (e.g. "cd /").
-            }
-
-            // If the shell's cwd changed, prev_dir_stat holds the stat of the directory
-            // being left; load_entries() uses it to re-select that directory if
-            // applicable.
-            load_entries(prev_dir_stat);
-        }
-    }
 
     if ( was_visible != now_visible ) {
         const int top = clamp_between(m_canvas.top(), 0, m_term_rows - 1);
@@ -544,15 +514,10 @@ bool Panel::handle_key(unsigned long ksym, unsigned state, const char*, int)
 extern "C" {
 
 void shell_preinit(void) { g_shell.preinit(); }
-void shell_init(int pty_fd, pid_t shell_pid) {
-    g_shell.init(pty_fd, shell_pid);
-    g_panel.init();
-}
+void shell_init(int pty_fd, pid_t shell_pid) { g_shell.init(pty_fd, shell_pid, g_panel); }
 void shell_cleanup_ipc(void) { g_shell.cleanup(); }
 int  shell_ipc_fd(void) { return g_shell.ipc_fd(); }
-void shell_service_ipc(void) { g_shell.service_ipc(g_panel); }
-void shell_notify_zsh_ready(void) { g_shell.notify_zsh_ready(); }
-void shell_notify_cwd_changed(void) { g_panel.notify_cwd_changed(); }
+void shell_service_ipc(void) { (void)g_shell.service_ipc(g_panel); }
 
 void panel_poll(int* term_dirty) { g_panel.poll(term_dirty); }
 void panel_draw(void) { g_panel.draw(); }

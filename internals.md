@@ -62,19 +62,27 @@ pending resize deadline into `pselect()` so the loop wakes even while otherwise 
 
 `Shell::preinit()` is the pre-fork boundary for the control socket: it creates the
 socket, exports its path as `SC_SOCKET`, and fails startup when socket setup fails. The
-shell inherits that environment. Adapter readiness (`OSC 6770`) is a startup latch;
-cwd changes (`OSC 6771`) are later state-change notifications. Do not merge them:
-readiness permits initialization to finish, while a cwd notification requests a
-directory reconciliation on a later frame.
+shell inherits that environment. `Shell::init()` services both PTY output and IPC until
+the first valid `scctl preprompt` request establishes the initial panel snapshot. Normal
+panel polling and input handling begin only after that request completes.
 
-`m_cwd` is always a usable, slash-terminated directory path. Acquiring it through
-`getcwd()` or `/proc/<shell-pid>/cwd` fails SC on error rather than storing an empty
-sentinel. This lets entry loading and selection rely on one directory invariant.
+The first prompt establishes `m_cwd` and `m_entries` together. Beyond that initialization
+boundary, `m_cwd` is slash-terminated and `m_entries` is nonempty. `Shell::get_cwd()`
+reads the shell directory through `/proc/<shell-pid>/cwd`. If that directory has been
+unlinked, Linux returns a path marked `(deleted)` that cannot be reopened by name;
+`load_entries()` retains the synthetic `..` recovery entry so the shell can leave it.
+During normal scans, entries that disappear or become inaccessible between `readdir()`
+and `lstat()` are omitted from the snapshot.
 
-The terminal owns the cursor. `Panel::prompt_padding()` reads it on demand through
-`tgetcursor()` instead of keeping a copied cursor row synchronized after every PTY
-write. The panel needs only the row, but the terminal accessor returns both coordinates
-for a symmetric C interface.
+`scctl preprompt` is the synchronous preprompt boundary. It reads the shell cwd,
+reconciles a cwd change, reloads entries even when the cwd is unchanged, and finally
+computes prompt padding. This covers fast commands that can finish between frame polls
+without coordinating state across the PTY and control socket.
+
+The terminal owns the cursor. `Panel::handle_preprompt()` reads it on demand through
+`tgetcursor()` while computing padding instead of keeping a copied cursor row
+synchronized after every PTY write. The panel needs only the row, but the terminal
+accessor returns both coordinates for a symmetric C interface.
 
 Panel key handling draws immediately only after a selection actually changes. Keys
 that the panel consumes solely to send a ZLE event leave drawing to the shell's normal
@@ -113,8 +121,12 @@ monotonic clock and refreshes the prompt after geometry settles.
   output may have moved the cursor past the old prompt; reusing its padding would push
   the next prompt down, while explicitly resetting it would clear command output before
   the new prompt is drawn.
-- Treat the current directory as data, not a lifecycle flag. Adapter readiness and a
-  pending cwd refresh have separate meanings and remain explicit state.
+- Keep directory reconciliation and entry reload in the synchronous `scctl preprompt`
+  transaction. Prompt completion is the correctness boundary for filesystem changes;
+  frame polling remains responsible only for presentation state.
+- Treat the first successful preprompt request as shell readiness. `Shell::init()` services
+  startup PTY and IPC activity until that request completes, so later panel methods can
+  rely on initialized cwd and entry invariants without readiness checks.
 - Keep alternate-screen startup behavior in terminfo rather than coupling it to the
   panel or changing the upstream terminal parser. `smcup` enters mode 1049 and homes
   the alternate-screen cursor; `rmcup` lets the terminal restore the shell cursor.
@@ -122,6 +134,13 @@ monotonic clock and refreshes the prompt after geometry settles.
   installed terminfo database unchanged.
 
 ## To-do
+
+### Live directory updates
+  - Consider an inotify watch for the current directory if live updates or reload cost
+    justify it. Add the new watch before scanning after a cwd change, coalesce child
+    create/delete/move/attribute/write events into a stale flag, and reload only when
+    visible. Handle `IN_MOVE_SELF`, `IN_DELETE_SELF`, `IN_IGNORED`, and queue overflow;
+    a prompt-driven reload remains the recovery boundary.
 
 ### Appearance
   - It has a ungly default application icon now.

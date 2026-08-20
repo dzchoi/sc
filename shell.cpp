@@ -1,6 +1,7 @@
 // See LICENSE for license details.
 
 #include <algorithm>            // for std::max()
+#include <cassert>              // for assert()
 #include <cerrno>               // for errno, EINTR
 #include <charconv>             // for std::from_chars()
 #include <chrono>               // for std::chrono::steady_clock
@@ -75,57 +76,71 @@ void Shell::preinit()
     die("initialize SC control socket failed: %s\n", std::strerror(error));
 }
 
-void Shell::init(int pty_fd, pid_t shell_pid)
+void Shell::init(int pty_fd, pid_t shell_pid, Panel& panel)
 {
     m_pty_fd = pty_fd;
     m_pid = shell_pid;
 
     const auto deadline = std::chrono::steady_clock::now()
-        + std::chrono::milliseconds(kZshReadyTimeoutMs);
-    struct pollfd pfd{m_pty_fd, POLLIN, 0};
-    while ( !m_zsh_ready ) {
+        + std::chrono::milliseconds(kFirstPrepromptTimeoutMs);
+    struct pollfd fds[] = {
+        {m_pty_fd, POLLIN, 0},
+        {m_ipc_fd, POLLIN, 0},
+    };
+
+    // Wait up to kFirstPrepromptTimeoutMs for zsh's first preprompt request while
+    // processing any startup output received through the PTY.
+    bool preprompt_requested = false;
+    while ( !preprompt_requested ) {
         const auto now = std::chrono::steady_clock::now();
         if ( now >= deadline )
-            die("SC zsh adapter did not report readiness within %d ms; "
-                "source sc.zsh from ~/.zshrc\n", kZshReadyTimeoutMs);
+            die("SC did not receive the first preprompt request within %d ms; "
+                "source sc.zsh from ~/.zshrc\n", kFirstPrepromptTimeoutMs);
 
         const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
             deadline - now).count();
         const int timeout_ms = static_cast<int>(std::max<int64_t>(1, remaining));
-        pfd.revents = 0;
-        const int result = ::poll(&pfd, 1, timeout_ms);
+        fds[0].revents = fds[1].revents = 0;
+        const int result = ::poll(fds, 2, timeout_ms);
         if ( result < 0 ) {
             if ( errno == EINTR ) continue;
-            die("waiting for SC zsh adapter failed: %s\n", std::strerror(errno));
+            die("waiting for SC's first preprompt failed: %s\n", std::strerror(errno));
         }
         if ( result == 0 ) continue;
-        if ( pfd.revents & POLLNVAL )
-            die("waiting for SC zsh adapter failed: invalid PTY descriptor\n");
-        // Preserve all startup output and let st's parser recognize OSC 6770.
-        if ( pfd.revents & (POLLIN | POLLERR | POLLHUP) ) ttyread();
+        assert( (fds[0].revents & POLLNVAL) == 0 && (fds[1].revents & POLLNVAL) == 0 );
+
+        // Process shell startup output before handle_preprompt() reads the terminal
+        // cursor.
+        if ( fds[0].revents & (POLLIN | POLLERR | POLLHUP) ) ttyread();
+        if ( fds[1].revents & POLLIN ) preprompt_requested = service_ipc(panel);
     }
 }
 
-void Shell::service_ipc(const Panel& panel) const
+bool Shell::service_ipc(Panel& panel) const
 {
     const int client = ::accept4(m_ipc_fd, nullptr, nullptr, SOCK_CLOEXEC);
-    if ( client < 0 ) return;
+    if ( client < 0 ) return false;
 
     char request[32]{};
     std::string reply;
+    bool preprompt_requested = false;
     if ( const ssize_t n = ::read(client, request, sizeof(request) - 1); n > 0 ) {
         if ( std::strcmp(request, "selected\n") == 0 ) {
             if ( const auto entry = panel.selected_entry() )
                 reply = std::string(*entry) + "\n";
         }
 
-        else if ( std::strncmp(request, "padding ", 8) == 0 && request[n - 1] == '\n' ) {
+        else if ( std::strncmp(request, "preprompt ", 10) == 0
+          && request[n - 1] == '\n' ) {
             int applied_padding;
-            const char* first = request + 8;
+            const char* first = request + 10;  // 10 == strlen("preprompt ")
             const char* last = request + n - 1;
             const auto result = std::from_chars(first, last, applied_padding);
-            if ( result.ec == std::errc{} && result.ptr == last && applied_padding >= 0 )
-                reply = std::to_string(panel.prompt_padding(applied_padding)) + "\n";
+            if ( result.ec == std::errc{} && result.ptr == last && applied_padding >= 0 ) {
+                reply = std::to_string(
+                    panel.handle_preprompt(get_cwd(), applied_padding)) + "\n";
+                preprompt_requested = true;
+            }
         }
     }
 
@@ -136,6 +151,7 @@ void Shell::service_ipc(const Panel& panel) const
         n += static_cast<size_t>(written);
     }
     ::close(client);
+    return preprompt_requested;
 }
 
 void Shell::cleanup() noexcept
@@ -164,7 +180,9 @@ std::string Shell::get_cwd() const
     const ssize_t n = ::readlink(proc, path, sizeof(path) - 1);
     if ( n <= 0 )
         die("read shell cwd failed: %s\n", n < 0 ? std::strerror(errno) : "empty path");
-    return std::string(path, n);
+    std::string cwd(path, n);
+    if ( cwd.back() != '/' ) cwd.push_back('/');
+    return cwd;
 }
 
 void Shell::send_event(ZleEvent event) const

@@ -41,31 +41,28 @@ public:
         time_t  mtime = 0;
     };
 
-    Panel();
+    Panel() { recompute_geometry(); }
     Panel(const Panel&) =delete;
     Panel& operator=(const Panel&) =delete;
     Panel(Panel&&) =default;
     Panel& operator=(Panel&&) =default;
 
-    // Returns the total prompt-owned padding needed to keep the prompt below the panel.
-    int prompt_padding(int applied_padding) const;
+    // Reconciles the shell cwd, rebuilds its directory snapshot, and returns the total
+    // prompt-owned padding needed to keep the prompt below the panel.
+    int handle_preprompt(std::string cwd, int applied_padding);
 
     // Returns the active entry's name, if any. The view remains valid until the
     // directory snapshot is rebuilt.
     std::optional<std::string_view> selected_entry() const;
 
-    // Builds the initial directory snapshot after Shell has established the shell state.
-    void init();
-
-    // Synchronizes shell state and snapshots whether this frame needs the overlay.
-    // term_dirty is the terminal's mutable row-dirty array, before drawregion() clears it.
+    // Snapshots whether this frame needs the overlay. term_dirty is the terminal's
+    // mutable row-dirty array, before drawregion() clears it.
     void poll(int* term_dirty);
     void draw();
 
     void resize(int cols, int rows);
     void adjust_timeout(double& timeout_ms);
 
-    void notify_cwd_changed() { m_cwd_changed = true; }
     void refresh_prompt();
 
     void toggle_panel();
@@ -84,7 +81,6 @@ private:
     // ----- panel state -----
     bool m_hidden = false;  // true: force-hidden regardless of shell ownership
     bool m_was_visible = false;  // visibility observed during the previous poll()
-    bool m_cwd_changed = false;
     bool m_dirty = false;   // true: render() rebuilds m_canvas's buffer before next draw.
     bool m_needs_draw = false;  // set by poll() before terminal rows are redrawn
 
