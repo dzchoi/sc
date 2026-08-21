@@ -154,15 +154,20 @@ _sc_enter() {
         return
     fi
 
-    # If not, enter the selected directory or execute the selected file.
-    if _sc_get_selected_entry; then
-        if [[ -d $REPLY ]]; then
-            builtin cd -- "$REPLY" && _sc_refresh_prompt
-        else
-            BUFFER="${(q)${:-$PWD/$REPLY}}"
-            CURSOR=${#BUFFER}
-            zle .accept-line
-        fi
+    # A hidden panel has no active selection, so an empty line retains ZLE's
+    # ordinary accept-line behavior.
+    if ! _sc_get_selected_entry; then
+        zle .accept-line
+        return
+    fi
+
+    # Enter the selected directory or execute the selected file.
+    if [[ -d $REPLY ]]; then
+        builtin cd -- "$REPLY" && _sc_refresh_prompt
+    else
+        BUFFER="${(q)${:-$PWD/$REPLY}}"
+        CURSOR=${#BUFFER}
+        zle .accept-line
     fi
 }
 

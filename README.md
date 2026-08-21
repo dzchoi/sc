@@ -77,7 +77,8 @@ Press `Ctrl+O` to show or hide the panel. When it is visible:
 With an empty command line, `Enter` changes into a selected directory. For a
 selected file, it places the shell-quoted path on the command line and runs it.
 When a command is already being edited, `Enter` behaves normally and runs that
-command.
+command. When the panel is hidden, `Enter` always retains its normal shell behavior,
+including accepting an empty line.
 
 Function-key actions such as `F3` and `F4` are configurable in `sc.zsh` through
 the `SC_USER_COMMANDS` associative array near the top of the file. Each command starts
@@ -85,6 +86,14 @@ with `ALTERNATE` when it restores the terminal's alternate screen, or `NORMAL` w
 leaves ordinary output at the terminal cursor. A standalone `{}` argument is replaced
 with the selected entry's absolute path; if `{}` is absent, the path is appended to the
 configured command.
+
+## Community patches
+
+This project does not apply any patches from https://st.suckless.org/patches/. Users can apply them as necessary.
+
+Recommended patches:
+  * https://st.suckless.org/patches/boxdraw/ : box lines become crisp and hard-edged pixel primitives.
+  * https://st.suckless.org/patches/csi_22_23/ : save and restore window title (for instance nvim does this when opening and closing)
 
 ## Current scope
 

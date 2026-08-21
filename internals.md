@@ -159,8 +159,7 @@ monotonic clock and refreshes the prompt after geometry settles.
     a prompt-driven reload remains the recovery boundary.
 
 ### Appearance
-  - It has a ungly default application icon now.
-  - `static unsigned int rows = 54` in config.h seems adjusting according to the terminal screen height. However, snap to the screen boundary without extra pixels.
+  - It has an ugly default application icon now.
   - Use '~' instead of '/home/stem' in the title.
   - Handle Symlinks and consider permissions.
   - `history` selection menu (F1?).
@@ -182,3 +181,6 @@ monotonic clock and refreshes the prompt after geometry settles.
 
 ### Support VFS using fuse-zip
   - Not only viewing a file in zip, we can execute a file directly from the zip.
+
+### Misc.
+  - Clean up socket when killed by Ctrl+C.

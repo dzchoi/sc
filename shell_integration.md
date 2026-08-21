@@ -85,6 +85,7 @@ Plain Enter is deliberately not consumed by the panel. `_sc_enter` owns it:
 - empty `BUFFER`, selected directory: change directory;
 - empty `BUFFER`, selected file: place its shell-quoted path in `BUFFER` and
   accept the line.
+- no active selection (including a force-hidden panel): invoke `zle .accept-line`.
 
 This makes ZLE's buffer, rather than a terminal-side heuristic, the authority
 for Enter behavior.

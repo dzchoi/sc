@@ -79,10 +79,10 @@ std::string format_size(off_t bytes)
 }
 
 // Format mtime as {date="M/DD/YY", time="HH:MM" + "a"/"p"}. Both empty on failure
-// (mtime <= 0 or localtime_r() error).
+// (mtime < 0 or localtime_r() error).
 std::pair<std::string, std::string> format_mtime(time_t mtime)
 {
-    if ( mtime <= 0 ) return {};
+    if ( mtime < 0 ) return {};  // mtime == 0 is Unix Epoch (1/1/1970, 00:00:00 UTC).
     struct tm tm_val{};
     if ( !::localtime_r(&mtime, &tm_val) ) return {};
 
@@ -133,7 +133,7 @@ void Panel::load_entries(std::string_view prev_path)
 
     // Manually add ".." as the first entry in case the filesystem's readdir() does not
     // enumerate it.
-    m_entries.emplace_back("..", true, 0, 0);
+    m_entries.emplace_back("..", true, 0, -1); // mtime == -1 shows empty Date and Time.
 
     if ( DIR* dir = ::opendir(m_cwd.c_str()) ) {
         while ( auto* dirent = ::readdir(dir) ) {
