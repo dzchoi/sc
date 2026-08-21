@@ -82,13 +82,14 @@ synthetic `..` index-zero default. On a same-cwd reload, the selected entry's ab
 path is restored when it remains. Reloading retains the viewport; `render()` moves it
 only when needed to keep the restored selection visible.
 
-`scctl preprompt` is the synchronous preprompt boundary. It reads the shell cwd,
-reconciles a cwd change, reloads entries even when the cwd is unchanged, and finally
-computes prompt padding. This covers fast commands that can finish between frame polls
-without coordinating state across the PTY and control socket.
+`scctl preprompt <applied_padding>` is the synchronous prompt boundary. It reads the
+shell cwd, reconciles a cwd change, reloads entries even when the cwd is unchanged, and
+finally computes prompt padding. `scctl reload` performs the same cwd and entry
+reconciliation without reading the terminal cursor. ZLE user commands use it because
+their post-command cursor is an output boundary, not a prompt boundary.
 
-The terminal owns the cursor. `Panel::handle_preprompt()` reads it on demand through
-`tgetcursor()` while computing padding instead of keeping a copied cursor row
+The terminal owns the cursor. `Panel::adjust_padding()` reads it on demand through
+`tgetcursor()` instead of keeping a copied cursor row
 synchronized after every PTY write. The panel needs only the row, but the terminal
 accessor returns both coordinates for a symmetric C interface.
 
@@ -124,14 +125,21 @@ monotonic clock and refreshes the prompt after geometry settles.
 - Expose only the selected entry name outside `Panel`. Zsh checks the path's current
   type immediately before acting instead of treating cached panel metadata as the
   execution authority.
-- Before user commands invalidate ZLE and write to the terminal, they discard the old
-  prompt's padding so ZLE's automatic redisplay re-expands the unpadded prompt. Command
-  output may have moved the cursor past the old prompt; reusing its padding would push
-  the next prompt down, while explicitly resetting it would clear command output before
-  the new prompt is drawn.
-- Keep directory reconciliation and entry reload in the synchronous `scctl preprompt`
-  transaction. Prompt completion is the correctness boundary for filesystem changes;
-  frame polling remains responsible only for presentation state.
+- `ALTERNATE` user commands retain the active prompt's padding through successful
+  alternate-screen restoration and let ZLE reset that prompt in place. `NORMAL`
+  commands discard the old padding before producing output, while failed `ALTERNATE`
+  commands discard it afterward. Both modes reload panel data without consulting the
+  output cursor and return command failures for ZLE's configured feedback.
+- Treat each user command's display mode as a configuration contract for successful
+  completion. Assign `ALTERNATE` only when success restores the old screen and `NORMAL`
+  when output advances beyond the old prompt; misclassification gives ZLE the wrong
+  prompt geometry. A failed `ALTERNATE` command is treated as normal diagnostic output
+  because it may fail before entering the alternate screen. Consequently, a command
+  that restores the old screen but returns nonzero remains an ambiguous edge case.
+- Keep directory reconciliation and entry reload synchronous in both `scctl preprompt`
+  and `scctl reload`. Only preprompt requests calculate padding, at a real prompt
+  boundary; reload requests must not infer prompt placement from a command-output
+  cursor. Frame polling remains responsible only for presentation state.
 - Treat the first successful preprompt request as shell readiness. `Shell::init()` services
   startup PTY and IPC activity until that request completes, so later panel methods can
   rely on initialized cwd and entry invariants without readiness checks.

@@ -6,11 +6,20 @@
 typeset -g _sc_prompt_base=$PROMPT
 typeset -g _sc_prompt_padding=0
 
-# Maps ZLE key sequences to user commands for the selected entry. A standalone `{}` is
-# replaced by its absolute path; when omitted, the path is appended.
+# Maps ZLE key sequences to a display mode and command for the selected entry.
+# ALTERNATE commands like less and vi restore the existing screen; NORMAL commands leave
+# output at the terminal cursor. A standalone `{}` is replaced by the entry's absolute
+# path; when omitted, the path is appended.
+#
+# Key sequences (see config.h for more):
+# F1–F4:       \eOP, \eOQ, \eOR, \eOS
+# Shift+F1–F4: \e[1;2P, \e[1;2Q, \e[1;2R, \e[1;2S
+# F5–F12:      \e[15~, \e[17~, \e[18~, \e[19~, \e[20~, \e[21~, \e[23~, \e[24~
+# Shift+F5–F12 use the corresponding number followed by ;2~
 typeset -gA SC_USER_COMMANDS=(
-    $'\eOR' 'less -- {}'        # F3
-    $'\eOS' 'vi -- {}'          # F4
+    $'\eOR'     'ALTERNATE less -- {}'  # F3
+    $'\eOS'     'ALTERNATE vi -- {}'    # F4
+    $'\e[1;2R'  'NORMAL cat {}'         # Shift+F3 (for testing)
 )
 
 # Enable SC's private input bindings only after ZLE has installed them below.
@@ -44,8 +53,14 @@ autoload -Uz add-zsh-hook
 add-zsh-hook precmd _sc_precmd
 
 _sc_refresh_prompt() {
-    _sc_update_prompt
+    _sc_update_prompt || return
     zle reset-prompt
+}
+
+_sc_reload_panel() {
+    local reply
+    reply=$(_scctl reload) || return
+    [[ $reply == ok ]]
 }
 
 _sc_cd_parent() {
@@ -79,13 +94,20 @@ _sc_insert_selected_path() {
 _sc_run_user_command() {
     local action=${SC_USER_COMMANDS[$KEYS]-}
     [[ -n $action ]] || return
-    _sc_get_selected_entry || return
 
     local -a argv
     argv=(${(Q)${(z)action}})
-    (( $#argv )) || return
+    (( $#argv >= 2 )) || return
 
-    # `path` is Zsh's special array tied to PATH.
+    local mode=${argv[1]}
+    shift argv
+    case $mode in
+        ALTERNATE | NORMAL) ;;
+        *) return 1 ;;
+    esac
+
+    _sc_get_selected_entry || return
+
     local selected_path=$PWD/$REPLY
     local -i replaced=0 i
     for (( i = 1; i <= $#argv; ++i )); do
@@ -96,12 +118,33 @@ _sc_run_user_command() {
     done
     (( replaced )) || argv+=("$selected_path")
 
-    # The redisplay after command output must not reuse this prompt's placement lines.
-    _sc_prompt_padding=0
-    PROMPT=$_sc_prompt_base
+    if [[ $mode == NORMAL ]]; then
+        # Normal output advances the terminal beyond the old prompt, so ZLE must not
+        # reuse that prompt's placement lines when the widget returns.
+        _sc_prompt_padding=0
+        PROMPT=$_sc_prompt_base
+    fi
+
     zle -I
     # Each array element is passed as one argument, so no additional quoting is needed.
     command "${argv[@]}"
+    local -i command_status=$?
+
+    # Both command modes may change the selected entry or directory contents. Reload
+    # without interpreting the post-command cursor as a prompt boundary.
+    _sc_reload_panel || return
+
+    if [[ $mode == ALTERNATE ]] && (( ! command_status )); then
+        # The alternate screen restored ZLE's existing prompt geometry.
+        zle reset-prompt
+    elif [[ $mode == ALTERNATE ]]; then
+        # A failed command may have produced diagnostics without restoring a screen.
+        _sc_prompt_padding=0
+        PROMPT=$_sc_prompt_base
+        return $command_status
+    fi
+
+    return $command_status
 }
 
 _sc_enter() {

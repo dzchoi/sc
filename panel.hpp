@@ -48,9 +48,12 @@ public:
     Panel(Panel&&) =default;
     Panel& operator=(Panel&&) =default;
 
-    // Reconciles the shell cwd, rebuilds its directory snapshot, and returns the total
-    // prompt-owned padding needed to keep the prompt below the panel.
-    int handle_preprompt(std::string cwd, int applied_padding);
+    // Reconciles the shell cwd and rebuilds its directory snapshot without consulting
+    // terminal prompt state.
+    void reload_panel(std::string cwd);
+
+    // Returns the total prompt-owned padding needed to keep the prompt below the panel.
+    int adjust_padding(int applied_padding) const;
 
     // Returns the active entry's name, if any. The view remains valid until the
     // directory snapshot is rebuilt.

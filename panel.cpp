@@ -311,10 +311,8 @@ void Panel::render()
 
 
 
-int Panel::handle_preprompt(std::string cwd, int applied_padding)
+void Panel::reload_panel(std::string cwd)
 {
-    // Every preprompt request reconciles m_cwd and rebuilds m_entries[] before
-    // computing prompt padding.
     std::string prev_path;
     if ( cwd != m_cwd ) {
         // Preserve the directory being left when its absolute path names an ordinary
@@ -331,7 +329,10 @@ int Panel::handle_preprompt(std::string cwd, int applied_padding)
         prev_path = m_cwd + m_entries[m_selected_idx].name;
     }
     load_entries(prev_path);
+}
 
+int Panel::adjust_padding(int applied_padding) const
+{
     // Recover the prompt's row before its existing SC-owned newline prefix, then add
     // only enough newlines to place that row below the visible panel.
     int cursor_y;

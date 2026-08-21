@@ -1,9 +1,6 @@
 # SC — Simple Commander
 
-SC is an NC (Norton Commander)-inspired terminal for Linux. It is based on the
-[st](https://st.suckless.org/) terminal emulator and adds a keyboard-driven
-directory panel over the terminal screen. The panel follows your shell's
-current directory, so you can browse files without leaving the command line.
+SC is an NC (Norton Commander)-inspired terminal emulator for Linux. Built directly on top of [st](https://st.suckless.org/), it operates as a full terminal - not an application running inside one - meaning you close it simply by typing `exit`. It adds a keyboard-driven directory panel over the terminal screen that follows your shell's current directory, allowing you to seamlessly browse files without ever leaving the command line.
 
 ![SC running as an overlay: the shell remains available on the left while the current directory is shown in the top-right panel.](assets/sc-running.png)
 
@@ -83,9 +80,11 @@ When a command is already being edited, `Enter` behaves normally and runs that
 command.
 
 Function-key actions such as `F3` and `F4` are configurable in `sc.zsh` through
-the `SC_USER_COMMANDS` associative array near the top of the file. A standalone
-`{}` argument is replaced with the selected entry's absolute path; if `{}` is
-absent, the path is appended to the configured command.
+the `SC_USER_COMMANDS` associative array near the top of the file. Each command starts
+with `ALTERNATE` when it restores the terminal's alternate screen, or `NORMAL` when it
+leaves ordinary output at the terminal cursor. A standalone `{}` argument is replaced
+with the selected entry's absolute path; if `{}` is absent, the path is appended to the
+configured command.
 
 ## Current scope
 

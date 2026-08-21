@@ -109,7 +109,7 @@ void Shell::init(int pty_fd, pid_t shell_pid, Panel& panel)
         if ( result == 0 ) continue;
         assert( (fds[0].revents & POLLNVAL) == 0 && (fds[1].revents & POLLNVAL) == 0 );
 
-        // Process shell startup output before handle_preprompt() reads the terminal
+        // Process shell startup output before adjust_padding() reads the terminal
         // cursor.
         if ( fds[0].revents & (POLLIN | POLLERR | POLLHUP) ) ttyread();
         if ( fds[1].revents & POLLIN ) preprompt_requested = service_ipc(panel);
@@ -130,6 +130,11 @@ bool Shell::service_ipc(Panel& panel) const
                 reply = std::string(*entry) + "\n";
         }
 
+        else if ( std::strcmp(request, "reload\n") == 0 ) {
+            panel.reload_panel(get_cwd());
+            reply = "ok\n";
+        }
+
         else if ( std::strncmp(request, "preprompt ", 10) == 0
           && request[n - 1] == '\n' ) {
             int applied_padding;
@@ -137,8 +142,11 @@ bool Shell::service_ipc(Panel& panel) const
             const char* last = request + n - 1;
             const auto result = std::from_chars(first, last, applied_padding);
             if ( result.ec == std::errc{} && result.ptr == last && applied_padding >= 0 ) {
+                // A preprompt transaction refreshes panel data before calculating
+                // placement from the terminal's prompt cursor.
+                panel.reload_panel(get_cwd());
                 reply = std::to_string(
-                    panel.handle_preprompt(get_cwd(), applied_padding)) + "\n";
+                    panel.adjust_padding(applied_padding)) + "\n";
                 preprompt_requested = true;
             }
         }
