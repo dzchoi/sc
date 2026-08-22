@@ -106,24 +106,24 @@ bool Panel::visible() const
         && m_canvas.width() > 0 && m_canvas.height() > 0;
 }
 
-void Panel::recompute_geometry()
+void Panel::recompute_geometry(int cols, int rows)
 {
     // Panel shows only when the terminal has room for both the panel and the shell.
     // kMinRows and kMinCols are the minimum terminal dimensions (each half gets at
     // least kMinRows/kFracHeight rows and kMinCols/kFracWidth cols).
-    if ( m_term_rows < kMinRows || m_term_cols < kMinCols ) {
-        m_canvas.reset(0, 0, 0, 0, m_term_cols);
+    if ( rows < kMinRows || cols < kMinCols ) {
+        m_canvas.reset(0, 0, 0, 0, cols);
         return;
     }
 
     const int top = 0;
-    const int width = m_term_cols - m_term_cols / kFracWidth;  // half the terminal
-    const int height = m_term_rows - m_term_rows / kFracHeight;
-    const int left = m_term_cols - width;          // top-right placement
+    const int width = cols - cols / kFracWidth;  // half the terminal
+    const int height = rows - rows / kFracHeight;
+    const int left = cols - width;
     assert( height >= kMinRowsPanel );
     compute_cols(width);
 
-    m_canvas.reset(top, left, width, height, m_term_cols);
+    m_canvas.reset(top, left, width, height, cols);
     m_dirty = true;
 }
 
@@ -356,10 +356,7 @@ void Panel::poll(int* term_dirty)
     const bool now_visible = visible();
 
     if ( was_visible != now_visible ) {
-        const int top = clamp_between(m_canvas.top(), 0, m_term_rows - 1);
-        const int bottom = clamp_between(
-            m_canvas.top() + m_canvas.height() - 1, 0, m_term_rows - 1);
-        for ( int i = top ; i <= bottom ; ++i )
+        for ( int i = m_canvas.top(); i < m_canvas.top() + m_canvas.height(); ++i )
             term_dirty[i] = 1;
     }
 
@@ -382,9 +379,7 @@ void Panel::draw()
 
 void Panel::resize(int cols, int rows)
 {
-    m_term_cols = cols;
-    m_term_rows = rows;
-    recompute_geometry();
+    recompute_geometry(cols, rows);
     m_prompt_refresh_deadline = std::chrono::steady_clock::now()
         + std::chrono::milliseconds(kResizeSettleDelayMs);
 }

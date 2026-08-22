@@ -42,7 +42,7 @@ public:
         {}
     };
 
-    Panel() { recompute_geometry(); }
+    Panel() =default;
     Panel(const Panel&) =delete;
     Panel& operator=(const Panel&) =delete;
     Panel(Panel&&) =default;
@@ -73,16 +73,9 @@ public:
     bool handle_key(unsigned long ksym, unsigned state, const char* buf, int len);
 
 private:
-    // ----- terminal geometry -----
-    // Terminal dimensions. Placeholder values used during static construction;
-    // `st` calls resize() from tresize() before the first frame is rendered.
-    inline static int m_term_cols = 80;
-    inline static int m_term_rows = 24;
+    // Empty until resize() receives the terminal dimensions before the first frame.
+    Canvas m_canvas;
 
-    // ----- panel geometry -----
-    Canvas m_canvas;  // recompute_geometry() only resets its size.
-
-    // ----- panel state -----
     bool m_hidden = false;  // true: force-hidden regardless of shell ownership
     bool m_was_visible = false;  // visibility observed during the previous poll()
     bool m_dirty = false;   // true: render() rebuilds m_canvas's buffer before next draw.
@@ -123,7 +116,7 @@ private:
         assert( column.name_w > 0 );
     }
 
-    void recompute_geometry();
+    void recompute_geometry(int cols, int rows);
 
     // Rebuilds m_entries[] from m_cwd and re-seats m_selected_idx when the absolute,
     // non-slash-terminated prev_path names an ordinary entry in the new snapshot.
