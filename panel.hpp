@@ -1,24 +1,8 @@
 // See LICENSE for license details.
-//
-// Public C++ interface for the file-manager panel.
-//
-// [panel.h] is the C ABI shim used by st.c/x.c. If you're calling from C, use that.
-// This header is the C++ interface for callers that want to hold or subclass a Panel
-// object directly (e.g. a future dual-pane setup that instantiates two panels).
-//
-// A single Panel owns:
-//   - its geometry within the terminal grid (top-right by default),
-//   - a snapshot of the current working directory's entries,
-//   - a scratch line buffer used for rendering.
-//
-// It never touches term.line; it only produces synthesized Line rows via row_glyphs()
-// for the caller to hand to xdrawline().
 
 #pragma once
 
 #include <cassert>              // for assert()
-#include <chrono>               // for std::chrono::steady_clock
-#include <optional>             // for std::optional<>
 #include <string>               // for std::string
 #include <string_view>          // for std::string_view
 #include <sys/types.h>          // for off_t, time_t
@@ -27,6 +11,8 @@
 
 #include "canvas.hpp"           // for Canvas, Draw
 #include "sc_config.hpp"        // for SC configuration constants
+
+
 
 class Panel {
 public:
@@ -48,49 +34,49 @@ public:
     Panel(Panel&&) =default;
     Panel& operator=(Panel&&) =default;
 
+    // Canvas geometry and backing storage used to present this panel.
+    const Canvas& canvas() const { return m_canvas; }
+
+    std::string_view cwd() const { return m_cwd; }
+
+    // Comm supplies disjoint horizontal ranges and guarantees that both panels receive
+    // the same top and height. Shared vertical geometry lets Comm invalidate and test
+    // their covered terminal rows once per frame.
+    void set_geometry(int top, int left, int width, int height, int term_cols);
+
+    // Records effective visibility and returns {visibility changed, needs render}.
+    // Comm separately invalidates terminal rows after polling both panels.
+    std::pair<bool, bool> set_visible(bool visible);
+
+    // Marks the cached canvas for rebuilding before its next presentation.
+    void dirty() { m_dirty = true; }
+
+    // Returns the selected snapshot name. The panel initialization boundary guarantees
+    // that m_entries is nonempty and m_selected_idx is valid.
+    std::string_view selected_entry() const { return m_entries[m_selected_idx].name; }
+
+    // Rebuilds dirty content, then presents the visible canvas.
+    void render();
+
     // Reconciles the shell cwd and rebuilds its directory snapshot without consulting
     // terminal prompt state.
-    void reload_panel(std::string cwd);
+    void reload(std::string cwd);
 
-    // Returns the total prompt-owned padding needed to keep the prompt below the panel.
-    int adjust_padding(int applied_padding) const;
-
-    // Returns the active entry's name, if any. The view remains valid until the
-    // directory snapshot is rebuilt.
-    std::optional<std::string_view> selected_entry() const;
-
-    // Snapshots whether this frame needs the overlay. term_dirty is the terminal's
-    // mutable row-dirty array, before drawregion() clears it.
-    void poll(int* term_dirty);
-    void draw();
-
-    void resize(int cols, int rows);
-    void adjust_timeout(double& timeout_ms);
-
-    void refresh_prompt();
-
-    void toggle_panel();
-    bool handle_key(unsigned long ksym, unsigned state, const char* buf, int len);
+    // Handles input after Comm has established that the focused panel is visible.
+    bool handle_key(unsigned long ksym);
 
 private:
-    // Empty until resize() receives the terminal dimensions before the first frame.
+    // Empty until resize_panels() receives terminal dimensions before the first frame.
     Canvas m_canvas;
 
-    bool m_hidden = false;  // true: force-hidden regardless of shell ownership
-    bool m_was_visible = false;  // visibility observed during the previous poll()
+    bool m_visible = false;  // effective visibility captured by set_visible()
     bool m_dirty = false;   // true: render() rebuilds m_canvas's buffer before next draw.
-    bool m_needs_draw = false;  // set by poll() before terminal rows are redrawn
 
-    // Debounce geometry changes so ZLE redraws its prompt only after its final shape.
-    static constexpr int kResizeSettleDelayMs = 150;
-    std::optional<std::chrono::steady_clock::time_point> m_prompt_refresh_deadline;
-
-    std::string m_cwd;             // current directory, always ending with '/'
-    std::vector<Entry> m_entries;  // cached entries in m_cwd
+    std::string m_cwd;  // empty before initialization; otherwise always ends with '/'
+    // Empty before initialization; afterward always contains at least synthetic "..".
+    std::vector<Entry> m_entries;
     int m_selected_idx = 0;        // index into m_entries of the highlighted row
     int m_first_visible_idx = 0;   // index into m_entries of the first visible row
-
-    bool visible() const;
 
     // Column X positions inside the panel (panel-local, 0 .. width-1).
     // Row layout:  | Name... | Size | Date | Time |
@@ -116,11 +102,7 @@ private:
         assert( column.name_w > 0 );
     }
 
-    void recompute_geometry(int cols, int rows);
-
     // Rebuilds m_entries[] from m_cwd and re-seats m_selected_idx when the absolute,
     // non-slash-terminated prev_path names an ordinary entry in the new snapshot.
     void load_entries(std::string_view prev_path);
-
-    void render();
 };

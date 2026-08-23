@@ -12,14 +12,13 @@
 
 
 
-class Panel;
-
 enum class ZleEvent {
     CdParent,
     CdChild,
     InsertName,
     InsertPath,
     RefreshPrompt,
+    SwitchPanel,
 };
 
 class Shell {
@@ -34,15 +33,14 @@ public:
     void preinit();
 
     // Associates the shell with its PTY and services startup I/O until the first
-    // preprompt request has established the panel snapshot.
-    void init(int pty_fd, pid_t shell_pid, Panel& panel);
+    // preprompt request has established both panel snapshots.
+    void init(int pty_fd, pid_t shell_pid);
 
     // The control socket watched by the main event loop.
     int ipc_fd() const { return m_ipc_fd; }
 
-    // Services one pending client request using or updating the panel state. Returns
-    // whether it handled a preprompt request.
-    bool service_ipc(Panel& panel) const;
+    // Services one pending client request through Comm's focused panel.
+    void service_ipc();
 
     // Releases the socket using only async-signal-safe operations. The process that
     // called preinit() is the sole owner; forked children leave the parent's socket alone.
@@ -67,6 +65,8 @@ private:
     int m_ipc_fd = -1;
     int m_pty_fd = -1;
     pid_t m_pid = 0;
+    // The first preprompt request establishes the initial panel snapshots.
+    bool m_preprompt_requested = false;
     char m_directory[sizeof(sockaddr_un{}.sun_path)]{};
     sockaddr_un m_address{};
 };

@@ -19,7 +19,7 @@
 
 #include "st.h"
 #include "win.h"
-#include "panel.h"
+#include "comm_api.h"
 
 #if   defined(__linux)
  #include <pty.h>

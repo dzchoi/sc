@@ -8,6 +8,11 @@
 
 using Rune = uint_least32_t;  // from st.h
 
+constexpr bool unlikely(bool value)
+{
+    return __builtin_expect(value, false);
+}
+
 
 
 // ----- NC-style panel layout -----
@@ -17,7 +22,7 @@ constexpr int kColsSize     = 7;  // "1048576" / "1023.9M" / "SUB-DIR"
 constexpr int kColsDate     = 8;  // "MM/DD/YY"
 constexpr int kColsTime     = 6;  // "HH:MMp"
 constexpr int kRowsPanelFrame = 5;  // header (2) + footer (3)
-constexpr int kMinRowsPanel = kRowsPanelFrame + 1;  // + footer (3)
+constexpr int kMinRowsPanel = kRowsPanelFrame + 1;  // + one entry row
 
 constexpr int kMaxLenExt    = 5;
 

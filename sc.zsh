@@ -60,7 +60,14 @@ _sc_refresh_prompt() {
 _sc_reload_panel() {
     local reply
     reply=$(_scctl reload) || return
-    [[ $reply == ok ]]
+    [[ -z $reply ]]
+}
+
+_sc_switch_panel() {
+    local reply
+    reply=$(_scctl focused_cwd) || return
+    builtin cd -- "$reply" || return
+    _sc_refresh_prompt
 }
 
 _sc_cd_parent() {
@@ -179,12 +186,14 @@ zle -N _sc_insert_selected_name
 zle -N _sc_insert_selected_path
 zle -N _sc_run_user_command
 zle -N _sc_enter
+zle -N _sc_switch_panel
 
 bindkey '\e[6770~' _sc_cd_parent
 bindkey '\e[6771~' _sc_cd_child
 bindkey '\e[6772~' _sc_insert_selected_name
 bindkey '\e[6773~' _sc_insert_selected_path
 bindkey '\e[6774~' _sc_refresh_prompt
+bindkey '\e[6775~' _sc_switch_panel
 bindkey '^M' _sc_enter
 bindkey '^J' _sc_enter
 () {

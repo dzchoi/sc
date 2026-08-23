@@ -4,18 +4,16 @@
 #include "canvas.hpp"           // for Canvas, Draw
 #include "sc_config.hpp"        // for SC configuration constants
 
-
-
 extern "C" {
 #include "win.h"                // for xdrawline()
 }
 
-namespace {
+
 
 // Minimal UTF-8 decoder. Returns bytes consumed; writes a code point (unicode char) to
 // *out. Never reads past `pend`, and never reports a length that would run past it
 // either.
-int utf8_next(const unsigned char* p, const unsigned char* pend, Rune* out)
+static int utf8_next(const unsigned char* p, const unsigned char* pend, Rune* out)
 {
     if ( *p < 0x80 ) {
         *out = *p;
@@ -50,7 +48,7 @@ int utf8_next(const unsigned char* p, const unsigned char* pend, Rune* out)
 // code point count. If a dot is found, *dot_cp_idx and *dot_byte_off are set to its
 // position (code point index and byte offset, respectively); otherwise *dot_cp_idx is
 // left at -1.
-int scan_ext(std::string_view s, int* dot_cp_idx, ptrdiff_t* dot_byte_off)
+static int scan_ext(std::string_view s, int* dot_cp_idx, ptrdiff_t* dot_byte_off)
 {
     *dot_cp_idx = -1;
     *dot_byte_off = -1;
@@ -76,14 +74,12 @@ int scan_ext(std::string_view s, int* dot_cp_idx, ptrdiff_t* dot_byte_off)
 // index `dot_idx` (or -1 if there's no dot), out of `n` total code points; 0 if there's
 // no usable extension (no dot, a leading dot as in ".bashrc", or longer than
 // kMaxLenExt).
-int ext_len(int dot_idx, int n)
+static int ext_len(int dot_idx, int n)
 {
     if ( dot_idx <= 0 ) return 0;
     const int l = n - dot_idx - 1;
     return l <= kMaxLenExt ? l : 0;
 }
-
-}  // namespace
 
 
 

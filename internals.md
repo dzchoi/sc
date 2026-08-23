@@ -28,10 +28,11 @@ rebase changes `sc` commit IDs, so its GitHub branch is updated with
 
 ## Frame lifecycle
 
-`Panel` never mutates `term.line`. `st.c` renders terminal content first, then the
-panel's cached `Canvas` overlays its covered rows. Hiding the panel therefore restores
-the terminal by marking the rows it covered dirty and letting the ordinary terminal
-renderer repaint them.
+`Panel` never mutates `term.line`. `st.c` renders terminal content first, then `Comm`
+presents each visible panel's cached `Canvas` region over its covered rows. The two
+canvases have disjoint horizontal geometry and share one terminal-width backing buffer.
+Hiding either region therefore restores the terminal by marking the shared covered
+rows dirty and letting the ordinary terminal renderer repaint them.
 
 The frame call chain is:
 
@@ -46,11 +47,13 @@ The frame call chain is:
           --> panel_draw()
 ```
 
-`panel_poll()` observes pending shell state, marks covered terminal rows dirty for a
-visibility transition, and snapshots `m_needs_draw` before
-`drawregion()` clears those flags. `panel_draw()` consumes that snapshot and presents
-only when required. It must remain after terminal drawing so terminal output cannot
-overwrite the overlay during the same frame.
+`panel_poll()` asks both panels to update their visibility history, then marks covered
+terminal rows dirty for either visibility transition. Only after both transitions are
+collected does `Comm` snapshot whether visible content or covered terminal rows require
+presentation. This ordering prevents one pane from invalidating a row after the other
+has decided it does not need presentation. `panel_draw()` consumes the shared snapshot
+and presents every visible region. It must remain after terminal drawing so terminal
+output cannot overwrite either overlay during the same frame.
 
 `run()` batches activity before falling through to `draw()`: it waits up to
 `minlatency` after initial activity, forces a frame by `maxlatency` under sustained
@@ -63,11 +66,18 @@ pending resize deadline into `pselect()` so the loop wakes even while otherwise 
 `Shell::preinit()` is the pre-fork boundary for the control socket: it creates the
 socket, exports its path as `SC_SOCKET`, and fails startup when socket setup fails. The
 shell inherits that environment. `Shell::init()` services both PTY output and IPC until
-the first valid `scctl preprompt` request establishes the initial panel snapshot. Normal
-panel polling and input handling begin only after that request completes.
+the first valid `scctl preprompt` request establishes both panel snapshots. Normal panel
+polling and input handling begin only after that request completes.
 
-The first prompt establishes `m_cwd` and `m_entries` together. Beyond that initialization
-boundary, `m_cwd` is slash-terminated and `m_entries` is nonempty. `Shell::get_cwd()`
+The first preprompt establishes `m_cwd` and `m_entries` together for both panels;
+`Shell::m_preprompt_requested` makes `Comm::reload_panels()` initialize both panels
+until the first preprompt completes. Beyond that boundary, each `m_cwd` is
+slash-terminated and each `m_entries` is nonempty because `load_entries()` always
+inserts synthetic `..`.
+The focused panel follows the shell cwd while the inactive panel retains its own
+directory. Tab changes focus in dual mode and sends a ZLE event that changes the shell
+cwd to the newly focused panel before refreshing its snapshot.
+`Shell::get_cwd()`
 reads the shell directory through `/proc/<shell-pid>/cwd`. If that directory has been
 unlinked, Linux returns a path marked `(deleted)` that cannot be reopened by name;
 `load_entries()` retains the synthetic `..` recovery entry so the shell can leave it.
@@ -83,48 +93,57 @@ path is restored when it remains. Reloading retains the viewport; `render()` mov
 only when needed to keep the restored selection visible.
 
 `scctl preprompt <applied_padding>` is the synchronous prompt boundary. It reads the
-shell cwd, reconciles a cwd change, reloads entries even when the cwd is unchanged, and
-finally computes prompt padding. `scctl reload` performs the same cwd and entry
-reconciliation without reading the terminal cursor. ZLE user commands use it because
-their post-command cursor is an output boundary, not a prompt boundary.
+shell cwd, reconciles the focused panel's cwd, reloads its entries even when the cwd is
+unchanged, and finally computes prompt padding. `scctl reload` performs the same
+focused-panel reconciliation without reading the terminal cursor. ZLE user commands
+use it because their post-command cursor is an output boundary, not a prompt boundary.
 
-The terminal owns the cursor. `Panel::adjust_padding()` reads it on demand through
+The terminal owns the cursor. `Comm::adjust_padding()` reads it on demand through
 `tgetcursor()` instead of keeping a copied cursor row
 synchronized after every PTY write. The panel needs only the row, but the terminal
 accessor returns both coordinates for a symmetric C interface.
 
-Panel key handling draws immediately only after a selection actually changes. Keys
-that the panel consumes solely to send a ZLE event leave drawing to the shell's normal
-output path. Resizing schedules one debounced prompt refresh; the deadline uses a
-monotonic clock and refreshes the prompt after geometry settles.
+`Panel` handles only keys that move its selection and draws immediately only after the
+selection actually changes. `Comm` handles forced visibility, focus, layout, and
+shell-event keys before delegating pane-local movement to the focused panel. Ctrl+O is
+handled before effective visibility so it can restore hidden panels. Ctrl+P switches
+between single and dual layout without changing focus; Tab changes focus only in dual
+layout and dirties both cached selectors. `x.c` removes lock modifiers before this
+dispatch, preserving shortcut behavior with Caps Lock and Num Lock. Resizing schedules
+one coordinator-owned debounced prompt refresh; the deadline uses a monotonic clock and
+refreshes the prompt after geometry settles.
 
 ## Lifecycle traps
 
-- `term.dirty` is valid for deciding whether to re-present the overlay only before
-  `drawregion()` clears it. Preserve the decision in panel state for `panel_draw()`.
+- `term.dirty` is valid for deciding whether to re-present the overlays only before
+  `drawregion()` clears it. Preserve the shared decision in `Comm` for `panel_draw()`.
+- Terminal dirtiness is row-granular. Collect both visibility transitions before
+  testing dirty rows, and re-present every visible pane when any covered row is dirty.
 - Marking rows dirty for a visibility change is not a replacement for checking dirty
   rows on every visible frame: terminal output may repaint beneath an already-visible
   overlay.
-- A user toggle changes `m_hidden` before the subsequent draw calls `panel_poll()`.
-  `poll()` compares `visible()` with `m_was_visible`, then records the new value. This
-  captures the pre-toggle state for a partial redraw; otherwise hiding can
-  leave stale overlay pixels. A full-terminal redraw avoids this trap but is more
-  expensive.
-- The panel's covered row range is the smallest correct invalidation for normal
+- A user toggle changes `Comm::m_hidden` before the subsequent draw calls `panel_poll()`.
+  `Comm::poll()` computes global visibility once and passes each panel its effective
+  visibility. Each `Panel::set_visible()` compares that input with `m_visible`, then
+  records the new value. This captures the pre-toggle state for a partial redraw;
+  otherwise hiding can leave stale overlay pixels. A full-terminal redraw avoids this
+  trap but is more expensive.
+- The panels' shared covered row range is the smallest correct invalidation for normal
   visibility changes. Full-terminal invalidation is reserved for terminal-wide changes.
 
 ## Decisions
 
-- Panel owns overlay eligibility, row invalidation for its visibility changes, and the
-  delayed prompt-refresh deadline. `st.c` owns terminal storage and rendering order;
-  it supplies `term.dirty` at the frame boundary rather than exposing terminal globals.
-- Keep C ABI functions thin. C++ state transitions happen on `g_shell` or `g_panel`
-  according to their boundary; terminal callbacks needed by the panel (`draw`,
-  `redraw`, `tgetcursor`) are declared by the terminal interface rather than mirrored
-  in panel state.
-- Expose only the selected entry name outside `Panel`. Zsh checks the path's current
-  type immediately before acting instead of treating cached panel metadata as the
-  execution authority.
+- `Comm` owns effective overlay eligibility, focus, single/dual and hidden state, shared
+  row invalidation, shell integration, and the delayed prompt-refresh deadline. Each
+  `Panel` owns only pane-local geometry, directory data, selection, and cached rendering
+  state. `st.c` owns terminal storage and rendering order; it supplies `term.dirty` at
+  the frame boundary rather than exposing terminal globals.
+- Keep C ABI functions thin. They delegate global lifecycle transitions to static
+  `Comm`; terminal callbacks needed by the coordinator (`draw`, `tgetcursor`) are
+  declared by the terminal interface rather than mirrored in panel state.
+- Expose only the focused panel's selected entry name outside `Comm`. Zsh checks the
+  path's current type immediately before acting instead of treating cached panel
+  metadata as the execution authority.
 - `ALTERNATE` user commands retain the active prompt's padding through successful
   alternate-screen restoration and let ZLE reset that prompt in place. `NORMAL`
   commands discard the old padding before producing output, while failed `ALTERNATE`
@@ -141,8 +160,12 @@ monotonic clock and refreshes the prompt after geometry settles.
   boundary; reload requests must not infer prompt placement from a command-output
   cursor. Frame polling remains responsible only for presentation state.
 - Treat the first successful preprompt request as shell readiness. `Shell::init()` services
-  startup PTY and IPC activity until that request completes, so later panel methods can
-  rely on initialized cwd and entry invariants without readiness checks.
+  startup PTY and IPC activity until that request completes and initializes both panel
+  snapshots, so later panel methods can rely on cwd and entry invariants without
+  readiness checks.
+- Keep focus non-null and represent forced hiding independently. This preserves the
+  active pane across Ctrl+O without a second saved focus pointer. Single/dual mode is
+  likewise independent, so Ctrl+P changes layout without changing the active directory.
 - Keep alternate-screen startup behavior in terminfo rather than coupling it to the
   panel or changing the upstream terminal parser. `smcup` enters mode 1049 and homes
   the alternate-screen cursor; `rmcup` lets the terminal restore the shell cursor.
@@ -177,10 +200,32 @@ monotonic clock and refreshes the prompt after geometry settles.
 
 ### Brief/detailed panel view
 
-### Support Double panel
-
 ### Support VFS using fuse-zip
   - Not only viewing a file in zip, we can execute a file directly from the zip.
 
+### Group selection
+  - Ctrl+Enter inserts all entries in command line.
+
 ### Misc.
   - Clean up socket when killed by Ctrl+C.
+  - Support Ctrl+U to swap the left and right panels.
+  - Unfocused panel should also unhighlight the panel title.
+  - Shift+Tab inserts the other panel's cwd into command line.
+
+### _scctl() written in zsh
+```
+zmodload zsh/net/socket
+zmodload zsh/system
+
+_scctl() {
+    [[ -n ${SC_SOCKET-} ]] || return 1
+    local REPLY fd
+    zsocket -- $SC_SOCKET || return 1  # $REPLY = client fd
+    fd=$REPLY
+    print -u $fd -r -- "$*" || { exec {fd}>&-; return 1; }
+    local buf
+    sysread -s 4096 buf <&fd  # up to 4096 bytes
+    exec {fd}>&-
+    printf %s $buf
+}
+```

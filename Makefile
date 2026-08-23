@@ -11,7 +11,7 @@ BUILDDIR = .build
 BIN		= sc
 CTL		= scctl
 SRC_C   = st.c x.c
-SRC_CPP = panel.cpp canvas.cpp shell.cpp
+SRC_CPP = comm.cpp panel.cpp canvas.cpp shell.cpp
 OBJ     = $(SRC_C:%.c=$(BUILDDIR)/%.o) $(SRC_CPP:%.cpp=$(BUILDDIR)/%.o)
 
 CC      ?= gcc
@@ -34,11 +34,12 @@ $(BUILDDIR)/%.o: %.c | $(BUILDDIR)
 $(BUILDDIR)/%.o: %.cpp | $(BUILDDIR)
 	$(CXX) $(STCXXFLAGS) -c $< -o $@
 
-$(BUILDDIR)/canvas.o:  canvas.cpp sc_config.hpp win.h
-$(BUILDDIR)/st.o:      config.h st.h win.h panel.h
-$(BUILDDIR)/x.o:       arg.h config.h st.h win.h panel.h
-$(BUILDDIR)/panel.o:   canvas.hpp panel.h panel.hpp sc_config.hpp shell.hpp st.h
-$(BUILDDIR)/shell.o:   panel.hpp sc_config.hpp shell.hpp st.h
+$(BUILDDIR)/canvas.o:  canvas.cpp canvas.hpp sc_config.hpp st.h win.h
+$(BUILDDIR)/st.o:      comm_api.h config.h st.h win.h
+$(BUILDDIR)/x.o:       arg.h comm_api.h config.h st.h win.h
+$(BUILDDIR)/comm.o:    canvas.hpp comm.hpp comm_api.h panel.hpp sc_config.hpp shell.hpp st.h
+$(BUILDDIR)/panel.o:   canvas.hpp comm.hpp panel.hpp sc_config.hpp shell.hpp st.h
+$(BUILDDIR)/shell.o:   canvas.hpp comm.hpp panel.hpp sc_config.hpp shell.hpp st.h
 
 $(OBJ): config.h config.mk
 
@@ -56,7 +57,7 @@ clean:
 dist: clean
 	mkdir -p st-$(VERSION)
 	cp -R FAQ LEGACY TODO LICENSE Makefile README config.mk\
-		config.def.h st.info st.1 arg.h st.h win.h panel.h panel.hpp shell.hpp canvas.hpp sc.zsh\
+		config.def.h st.info st.1 arg.h st.h win.h comm_api.h panel.hpp comm.hpp shell.hpp canvas.hpp sc_config.hpp sc.zsh\
 		$(SRC_C) $(SRC_CPP) scctl.c\
 		st-$(VERSION)
 	tar -cf - st-$(VERSION) | gzip > st-$(VERSION).tar.gz

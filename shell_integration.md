@@ -16,8 +16,9 @@ zsh ZLE       <-- private sequences via PTY ---  SC
 | Component | Responsibility |
 | --- | --- |
 | `sc.zsh` | Owns ZLE's command buffer, `cd`, prompt construction, and Enter behavior. |
-| `panel.cpp` | Owns selection, panel geometry, and visibility; supplies panel state to IPC replies. |
-| `shell.cpp` | Owns communication with the managed shell: socket protocol, PTY events, and shell state reads. |
+| `comm.cpp` | Coordinates focus, layout, visibility, shared redraw decisions, and IPC-facing panel state. |
+| `panel.cpp` | Owns each pane's directory snapshot, selection, geometry, and cached rendering state. |
+| `shell.cpp` | Owns the managed-shell socket protocol, PTY events, and shell state reads. |
 | `st.c` | Starts the managed shell and connects its PTY lifecycle to shell initialization. |
 | `x.c` | Watches the control socket in the main event loop. |
 | `scctl` | Queries the private socket for zsh. |
@@ -46,18 +47,20 @@ Startup proceeds as follows:
    bindings, then continues processing its startup files.
 5. `Shell::init()` polls both the PTY and control socket, processing startup output while
    waiting up to one second for the first preprompt request.
-6. The first `precmd` hook calls `scctl preprompt`. SC synchronously establishes the panel's
-   initial cwd and directory snapshot, replies with the prompt padding, and completes
-   shell initialization before zsh prints the prompt.
+6. The first `precmd` hook calls `scctl preprompt`. SC synchronously establishes both
+   panels' initial cwd and directory snapshots, replies with the prompt padding, and
+   completes shell initialization before zsh prints the prompt.
 
-The first preprompt handshake establishes both adapter availability and the panel's data
-invariants before normal polling or input handling begins. SC exits with a configuration
-error if the mandatory adapter does not prepare a prompt within the deadline.
+The first preprompt handshake establishes both adapter availability and both panels'
+data invariants before normal polling or input handling begins. SC exits with a
+configuration error if the mandatory adapter does not prepare a prompt within the
+deadline.
 
 ## Panel keys and ZLE
 
-`Panel::handle_key()` continues to handle selection movement locally. For an
-operation requiring shell state, it writes a fixed private sequence to the PTY:
+`Comm::handle_key()` handles coordinator shortcuts and delegates selection movement to
+the focused panel. For an operation requiring shell state, Comm sends a fixed private
+sequence to the PTY:
 
 | Key | Sequence | ZLE widget |
 | --- | --- | --- |
@@ -66,11 +69,17 @@ operation requiring shell state, it writes a fixed private sequence to the PTY:
 | `Ctrl+Enter` | `ESC [ 6772 ~` | `_sc_insert_selected_name` |
 | `Ctrl+Shift+Enter` | `ESC [ 6773 ~` | `_sc_insert_selected_path` |
 | panel refresh | `ESC [ 6774 ~` | `_sc_refresh_prompt` |
+| `Tab` in dual mode | `ESC [ 6775 ~` | `_sc_switch_panel` |
 
 The sequences contain no pathname and are not shell commands. They only select
 a ZLE widget. `_sc_cd_child`, for example, queries SC for the selected item and
 runs `builtin cd -- "$REPLY"` only when that item is a directory. ZLE retains
 the current `BUFFER` throughout this operation.
+
+Ctrl+P switches between single and dual layout without changing focus. In dual mode,
+Tab focuses the other panel; `_sc_switch_panel` queries that panel's retained cwd,
+changes the shell to it, and refreshes the prompt. Ctrl+O hides or restores both panels
+without discarding their layout, focus, directories, or selections.
 
 F3 and F4 remain ordinary terminal key sequences and are bound directly by `sc.zsh`.
 `SC_USER_COMMANDS` maps those sequences to a display mode followed by command
@@ -92,23 +101,25 @@ for Enter behavior.
 
 ## Control socket
 
-`sc.zsh` calls `scctl selected`, `scctl preprompt <applied_padding>`, or `scctl reload`.
-`scctl` connects to the socket named by `SC_SOCKET`, sends the request, and prints the
-response.
+`sc.zsh` calls `scctl selected`, `scctl focused_cwd`,
+`scctl preprompt <applied_padding>`, or `scctl reload`. `scctl` connects to the socket
+named by `SC_SOCKET`, sends the request, and prints the response.
 
 During initialization, `Shell::init()` services the first preprompt request directly.
 Afterward, `x.c` adds `shell_ipc_fd()` to its `pselect()` fd set and calls
 `shell_service_ipc()` when a request is ready. Requests dispatch to:
 
-- `Shell::service_ipc()` replies to `selected` with the entry name, or no payload when
-  the panel has no active selection. The Zsh widget checks the selected path's current
-  type before acting on it;
+- `Shell::service_ipc()` replies to `selected` with the focused panel's entry name, or
+  no payload when no panel is effectively visible. The Zsh widget checks the selected
+  path's current type before acting on it;
+- `focused_cwd` returns the focused panel's retained directory so a Tab focus change
+  can make it the shell working directory;
 - `preprompt <applied_padding>` synchronously reads the shell cwd, calls
-  `Panel::reload_panel()`, then returns the result of
-  `Panel::adjust_padding()`: the total number of prompt-owned newlines needed
+  `Comm::reload_panels()`, then returns the result of
+  `Comm::adjust_padding()`: the total number of prompt-owned newlines needed
   after replacing the adapter's existing prefix;
-- `reload` performs the same cwd reconciliation and entry rebuild but returns `ok`
-  without reading the terminal cursor or calculating prompt padding.
+- `reload` performs the same cwd reconciliation and entry rebuild, replying with an
+  otherwise-empty line without reading the terminal cursor or calculating prompt padding.
 
 The process that creates the socket remains its sole cleanup owner across `fork()`.
 Normal `exit()` paths release it through `Shell`'s destructor. The `SIGCHLD` path calls
@@ -122,22 +133,23 @@ variable is absent, relative, unusable, or too long for a Unix-domain socket add
 
 ## Directory refresh path
 
-Both preprompt and reload requests read `/proc/<shell-pid>/cwd` and rebuild the
-corresponding directory snapshot before replying. Preprompt requests cover ordinary
-accepted commands, panel-driven directory changes, and prompt refreshes after geometry
-or visibility changes. F-key commands use `reload` because their post-command cursor
-does not identify the active prompt. Both operations avoid ordering state across the
-PTY and control-socket channels.
+Both preprompt and reload requests read `/proc/<shell-pid>/cwd` and rebuild the focused
+panel's corresponding directory snapshot before replying. The inactive panel retains
+its own directory and snapshot until Tab focuses it and ZLE changes the shell to that
+directory. Preprompt requests cover ordinary accepted commands, panel-driven directory
+changes, and prompt refreshes after geometry or visibility changes. F-key commands use
+`reload` because their post-command cursor does not identify the active prompt. Both
+operations avoid ordering state across the PTY and control-socket channels.
 
 ## Prompt padding and redraw
 
-The panel reads the terminal cursor through `tgetcursor()` when it determines whether
-a prompt needs padding.
+`Comm` reads the terminal cursor through `tgetcursor()` when it determines whether a
+prompt needs padding below the panels' shared vertical extent.
 
 Before zsh renders or refreshes a prompt, `_sc_update_prompt` calls
-`scctl preprompt <applied_padding>`. SC refreshes the panel snapshot, discounts the adapter's
-existing prompt-owned newlines from the terminal cursor row, and returns the total
-number of real newlines needed in `PROMPT`; `_sc_refresh_prompt` then calls
+`scctl preprompt <applied_padding>`. SC refreshes the focused panel snapshot, discounts
+the adapter's existing prompt-owned newlines from the terminal cursor row, and returns
+the total number of real newlines needed in `PROMPT`; `_sc_refresh_prompt` then calls
 `zle reset-prompt`. `_sc_precmd` starts each new prompt with `applied_padding` set to
 zero.
 

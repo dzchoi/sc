@@ -19,7 +19,7 @@ char *argv0;
 #include "arg.h"
 #include "st.h"
 #include "win.h"
-#include "panel.h"
+#include "comm_api.h"
 
 /* types used in config.h */
 typedef struct {
@@ -1868,9 +1868,9 @@ kpress(XEvent *ev)
 		}
 	}
 
-	/* 1.5. panel consumes keys while visible and interested. returns 0 for keys that
-	 * should flow to the shell. */
-	if (panel_handle_key((unsigned long)ksym, e->state, buf, len))
+	/* 1.5. panel consumes its shortcuts and, while visible, navigation keys. returns 0
+	 * for keys that should flow to the shell. */
+	if (panel_handle_key((unsigned long)ksym, e->state & ~ignoremod))
 		return;
 
 	/* 2. custom keys from config.h */

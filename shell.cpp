@@ -12,12 +12,11 @@
 #include <limits.h>             // for PATH_MAX
 #include <poll.h>               // for poll(), pollfd, POLLIN, ...
 #include <string>               // for std::string, std::to_string()
-
 #include <sys/socket.h>         // for accept4(), bind(), listen(), socket()
 #include <sys/stat.h>           // for chmod()
 #include <unistd.h>             // for close(), getpid(), readlink(), ...
 
-#include "panel.hpp"            // for Panel
+#include "comm.hpp"             // for Comm
 #include "shell.hpp"            // for Shell
 
 extern "C" {
@@ -76,7 +75,7 @@ void Shell::preinit()
     die("initialize SC control socket failed: %s\n", std::strerror(error));
 }
 
-void Shell::init(int pty_fd, pid_t shell_pid, Panel& panel)
+void Shell::init(int pty_fd, pid_t shell_pid)
 {
     m_pty_fd = pty_fd;
     m_pid = shell_pid;
@@ -90,8 +89,7 @@ void Shell::init(int pty_fd, pid_t shell_pid, Panel& panel)
 
     // Wait up to kFirstPrepromptTimeoutMs for zsh's first preprompt request while
     // processing any startup output received through the PTY.
-    bool preprompt_requested = false;
-    while ( !preprompt_requested ) {
+    while ( !m_preprompt_requested ) {
         const auto now = std::chrono::steady_clock::now();
         if ( now >= deadline )
             die("SC did not receive the first preprompt request within %d ms; "
@@ -112,27 +110,32 @@ void Shell::init(int pty_fd, pid_t shell_pid, Panel& panel)
         // Process shell startup output before adjust_padding() reads the terminal
         // cursor.
         if ( fds[0].revents & (POLLIN | POLLERR | POLLHUP) ) ttyread();
-        if ( fds[1].revents & POLLIN ) preprompt_requested = service_ipc(panel);
+        if ( fds[1].revents & POLLIN ) service_ipc();
     }
 }
 
-bool Shell::service_ipc(Panel& panel) const
+void Shell::service_ipc()
 {
     const int client = ::accept4(m_ipc_fd, nullptr, nullptr, SOCK_CLOEXEC);
-    if ( client < 0 ) return false;
+    if ( client < 0 ) return;
 
     char request[32]{};
     std::string reply;
-    bool preprompt_requested = false;
     if ( const ssize_t n = ::read(client, request, sizeof(request) - 1); n > 0 ) {
         if ( std::strcmp(request, "selected\n") == 0 ) {
-            if ( const auto entry = panel.selected_entry() )
+            assert( m_preprompt_requested );
+            if ( const auto entry = Comm::selected_entry() )
                 reply = std::string(*entry) + "\n";
         }
 
+        else if ( std::strcmp(request, "focused_cwd\n") == 0 ) {
+            assert( m_preprompt_requested );
+            reply = std::string(Comm::focused_cwd()) + "\n";
+        }
+
         else if ( std::strcmp(request, "reload\n") == 0 ) {
-            panel.reload_panel(get_cwd());
-            reply = "ok\n";
+            Comm::reload_panels(get_cwd(), !m_preprompt_requested);
+            reply = "\n";
         }
 
         else if ( std::strncmp(request, "preprompt ", 10) == 0
@@ -144,10 +147,9 @@ bool Shell::service_ipc(Panel& panel) const
             if ( result.ec == std::errc{} && result.ptr == last && applied_padding >= 0 ) {
                 // A preprompt transaction refreshes panel data before calculating
                 // placement from the terminal's prompt cursor.
-                panel.reload_panel(get_cwd());
-                reply = std::to_string(
-                    panel.adjust_padding(applied_padding)) + "\n";
-                preprompt_requested = true;
+                Comm::reload_panels(get_cwd(), !m_preprompt_requested);
+                reply = std::to_string(Comm::adjust_padding(applied_padding)) + "\n";
+                m_preprompt_requested = true;
             }
         }
     }
@@ -159,7 +161,6 @@ bool Shell::service_ipc(Panel& panel) const
         n += static_cast<size_t>(written);
     }
     ::close(client);
-    return preprompt_requested;
 }
 
 void Shell::cleanup() noexcept
@@ -201,6 +202,7 @@ void Shell::send_event(ZleEvent event) const
         "\033[6772~",  // InsertName
         "\033[6773~",  // InsertPath
         "\033[6774~",  // RefreshPrompt
+        "\033[6775~",  // SwitchPanel
     };
     const char* sequence = sequences[static_cast<unsigned>(event)];
     ttywrite(sequence, std::strlen(sequence), 1);

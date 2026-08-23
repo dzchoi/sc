@@ -3,7 +3,7 @@
 #pragma once
 
 #include <cstdint>              // for uint32_t
-#include <string>               // for std::string, std::string_view
+#include <string_view>          // for std::string_view
 #include <utility>              // for std::forward()
 #include <vector>               // for std::vector<>
 
@@ -45,7 +45,7 @@ public:
     // with a mid-string ellipsis ('…' U+2026) instead of a hard cut: Keep::Left/Right/
     // Mid keep the head/tail/middle slice (one ellipsis, in place of the discarded
     // part); Keep::Both keeps the head and, if the text has a short extension (<=
-    // kMaxExtLen chars after the last '.', ignoring a leading dot as in ".bashrc"), the
+    // kMaxLenExt chars after the last '.', ignoring a leading dot as in ".bashrc"), the
     // extension too (one ellipsis in between, dot dropped) - with no usable extension,
     // Keep::Both behaves like Keep::Left. Once given, ellipsize() decides the cut on
     // its own; left()/mid()/right() then only affect where the text sits when it *fits*
@@ -90,6 +90,8 @@ private:
     int m_span;  // field width
 };
 
+
+
 // Canvas: A rectangular drawing surface positioned within the terminal grid.
 //
 // It owns its coordinates (`left`), boundaries (`width` x `height`), and backing line
@@ -122,9 +124,10 @@ public:
     void present();
 
 private:
-    inline static std::vector<Glyph> m_linebuf;  // m_height * m_term_cols glyphs
-
     friend class Draw;
+
+    // Line buffer shared across left and right panels.
+    inline static std::vector<Glyph> m_linebuf;  // m_height * m_term_cols glyphs
 
     inline static int m_term_cols = 0;
     int m_top = 0;
