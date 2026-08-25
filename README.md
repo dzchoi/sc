@@ -74,6 +74,10 @@ Press `Ctrl+O` to show or hide the panel. When it is visible:
 | `F4` | Edit the selected entry with `vi` |
 | `Enter` | Run the typed command, or act on the selected entry |
 
+SC consumes only keys that apply to the current panel layout. Keys that are not
+applicable, such as `Tab` when only one panel is shown or `Up` when the panels
+are hidden, pass through to the shell and retain their normal shell behavior.
+
 With an empty command line, `Enter` changes into a selected directory. For a
 selected file, it places the shell-quoted path on the command line and runs it.
 When a command is already being edited, `Enter` behaves normally and runs that
@@ -81,11 +85,9 @@ command. When the panel is hidden, `Enter` always retains its normal shell behav
 including accepting an empty line.
 
 Function-key actions such as `F3` and `F4` are configurable in `sc.zsh` through
-the `SC_USER_COMMANDS` associative array near the top of the file. Each command starts
-with `ALTERNATE` when it restores the terminal's alternate screen, or `NORMAL` when it
-leaves ordinary output at the terminal cursor. A standalone `{}` argument is replaced
-with the selected entry's absolute path; if `{}` is absent, the path is appended to the
-configured command.
+the `SC_USER_COMMANDS` associative array near the top of the file. A standalone `{}`
+argument is replaced with the selected entry's absolute path; if `{}` is absent, the
+path is appended to the configured command.
 
 ## Community patches
 

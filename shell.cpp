@@ -133,11 +133,6 @@ void Shell::service_ipc()
             reply = std::string(Comm::focused_cwd()) + "\n";
         }
 
-        else if ( std::strcmp(request, "reload\n") == 0 ) {
-            Comm::reload_panels(get_cwd(), !m_preprompt_requested);
-            reply = "\n";
-        }
-
         else if ( std::strncmp(request, "preprompt ", 10) == 0
           && request[n - 1] == '\n' ) {
             int applied_padding;

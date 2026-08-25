@@ -94,14 +94,16 @@ only when needed to keep the restored selection visible.
 
 `scctl preprompt <applied_padding>` is the synchronous prompt boundary. It reads the
 shell cwd, reconciles the focused panel's cwd, reloads its entries even when the cwd is
-unchanged, and finally computes prompt padding. `scctl reload` performs the same
-focused-panel reconciliation without reading the terminal cursor. ZLE user commands
-use it because their post-command cursor is an output boundary, not a prompt boundary.
+unchanged, and finally computes prompt padding. Current widget paths use preprompt after
+successful actions and send no request after failures.
 
 The terminal owns the cursor. `Comm::adjust_padding()` reads it on demand through
 `tgetcursor()` instead of keeping a copied cursor row
 synchronized after every PTY write. The panel needs only the row, but the terminal
 accessor returns both coordinates for a symmetric C interface.
+The Zsh adapter normalizes a failed preprompt transaction to zero padding, so loss of
+the control path falls back to the base prompt. Successful replies are trusted because
+the private server validates the request and emits a non-negative integer.
 
 `Panel` handles only keys that move its selection and draws immediately only after the
 selection actually changes. `Comm` handles forced visibility, focus, layout, and
@@ -130,6 +132,15 @@ refreshes the prompt after geometry settles.
   trap but is more expensive.
 - The panels' shared covered row range is the smallest correct invalidation for normal
   visibility changes. Full-terminal invalidation is reserved for terminal-wide changes.
+- `scctl preprompt` cursor arithmetic is valid only when its argument accounts for all
+  rows between the unpadded prompt origin and the terminal cursor. The Zsh adapter adds
+  the current `BUFFERLINES` before `zle -I` so multiline and wrapped edit buffers are
+  included. A successful command that leaves primary-screen output still makes the
+  cursor an output boundary rather than the active prompt boundary.
+- Assigning `PROMPT` does not re-expand ZLE's active prompt. A failed widget currently
+  clears `_sc_prompt_padding` and `PROMPT`, while Zsh redraws the prompt representation
+  that was expanded before the widget. A later in-place refresh can therefore report
+  zero even though the active display still contains SC-owned padding.
 
 ## Decisions
 
@@ -144,21 +155,13 @@ refreshes the prompt after geometry settles.
 - Expose only the focused panel's selected entry name outside `Comm`. Zsh checks the
   path's current type immediately before acting instead of treating cached panel
   metadata as the execution authority.
-- `ALTERNATE` user commands retain the active prompt's padding through successful
-  alternate-screen restoration and let ZLE reset that prompt in place. `NORMAL`
-  commands discard the old padding before producing output, while failed `ALTERNATE`
-  commands discard it afterward. Both modes reload panel data without consulting the
-  output cursor and return command failures for ZLE's configured feedback.
-- Treat each user command's display mode as a configuration contract for successful
-  completion. Assign `ALTERNATE` only when success restores the old screen and `NORMAL`
-  when output advances beyond the old prompt; misclassification gives ZLE the wrong
-  prompt geometry. A failed `ALTERNATE` command is treated as normal diagnostic output
-  because it may fail before entering the alternate screen. Consequently, a command
-  that restores the old screen but returns nonzero remains an ambiguous edge case.
-- Keep directory reconciliation and entry reload synchronous in both `scctl preprompt`
-  and `scctl reload`. Only preprompt requests calculate padding, at a real prompt
-  boundary; reload requests must not infer prompt placement from a command-output
-  cursor. Frame polling remains responsible only for presentation state.
+- Keep `SC_USER_COMMANDS` values as argument-vector templates. The Zsh adapter replaces
+  a standalone `{}` with the selected absolute path, or appends that path when the
+  placeholder is absent, then invokes the vector directly without evaluating shell
+  code.
+- Keep directory reconciliation, entry reload, and padding calculation in the
+  synchronous `scctl preprompt` transaction. Frame polling remains responsible only
+  for presentation state.
 - Treat the first successful preprompt request as shell readiness. `Shell::init()` services
   startup PTY and IPC activity until that request completes and initializes both panel
   snapshots, so later panel methods can rely on cwd and entry invariants without
@@ -182,6 +185,7 @@ refreshes the prompt after geometry settles.
     a prompt-driven reload remains the recovery boundary.
 
 ### Appearance
+  - Restore previous panel view as well as m_selected_idx.
   - It has an ugly default application icon now.
   - Use '~' instead of '/home/stem' in the title.
   - Handle Symlinks and consider permissions.

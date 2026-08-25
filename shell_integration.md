@@ -82,11 +82,11 @@ changes the shell to it, and refreshes the prompt. Ctrl+O hides or restores both
 without discarding their layout, focus, directories, or selections.
 
 F3 and F4 remain ordinary terminal key sequences and are bound directly by `sc.zsh`.
-`SC_USER_COMMANDS` maps those sequences to a display mode followed by command
-arguments. The shared widget validates and removes the mode, queries SC for the
-selected name, substitutes its absolute path for a standalone `{}` argument (or
-appends it when absent), and executes the resulting argument vector without evaluating
-it as shell code.
+`SC_USER_COMMANDS` maps those sequences to command arguments. The shared widget queries
+SC for the selected name, substitutes its absolute path for a standalone `{}` argument
+(or appends it when absent), and executes the resulting argument vector without
+evaluating it as shell code. It invalidates the active ZLE display before execution and
+passes the command status through `_sc_refresh_prompt`.
 
 Plain Enter is deliberately not consumed by the panel. `_sc_enter` owns it:
 
@@ -101,9 +101,9 @@ for Enter behavior.
 
 ## Control socket
 
-`sc.zsh` calls `scctl selected`, `scctl focused_cwd`,
-`scctl preprompt <applied_padding>`, or `scctl reload`. `scctl` connects to the socket
-named by `SC_SOCKET`, sends the request, and prints the response.
+The Zsh adapter uses `scctl selected`, `scctl focused_cwd`, and
+`scctl preprompt <applied_padding>`. `scctl` connects to the socket named by
+`SC_SOCKET`, sends the request, and prints the response.
 
 During initialization, `Shell::init()` services the first preprompt request directly.
 Afterward, `x.c` adds `shell_ipc_fd()` to its `pselect()` fd set and calls
@@ -118,8 +118,6 @@ Afterward, `x.c` adds `shell_ipc_fd()` to its `pselect()` fd set and calls
   `Comm::reload_panels()`, then returns the result of
   `Comm::adjust_padding()`: the total number of prompt-owned newlines needed
   after replacing the adapter's existing prefix;
-- `reload` performs the same cwd reconciliation and entry rebuild, replying with an
-  otherwise-empty line without reading the terminal cursor or calculating prompt padding.
 
 The process that creates the socket remains its sole cleanup owner across `fork()`.
 Normal `exit()` paths release it through `Shell`'s destructor. The `SIGCHLD` path calls
@@ -133,13 +131,13 @@ variable is absent, relative, unusable, or too long for a Unix-domain socket add
 
 ## Directory refresh path
 
-Both preprompt and reload requests read `/proc/<shell-pid>/cwd` and rebuild the focused
-panel's corresponding directory snapshot before replying. The inactive panel retains
-its own directory and snapshot until Tab focuses it and ZLE changes the shell to that
-directory. Preprompt requests cover ordinary accepted commands, panel-driven directory
-changes, and prompt refreshes after geometry or visibility changes. F-key commands use
-`reload` because their post-command cursor does not identify the active prompt. Both
-operations avoid ordering state across the PTY and control-socket channels.
+Each preprompt request reads `/proc/<shell-pid>/cwd` and rebuilds the focused panel's
+corresponding directory snapshot before replying. The inactive panel retains its own
+directory and snapshot until Tab focuses it and ZLE changes the shell to that directory.
+Preprompt requests cover ordinary accepted commands, panel-driven directory changes,
+successful F-key commands, and prompt refreshes after geometry or visibility changes.
+Failed widget actions do not send a refresh request. The synchronous request avoids
+ordering state across the PTY and control-socket channels.
 
 ## Prompt padding and redraw
 
@@ -151,22 +149,19 @@ Before zsh renders or refreshes a prompt, `_sc_update_prompt` calls
 the adapter's existing prompt-owned newlines from the terminal cursor row, and returns
 the total number of real newlines needed in `PROMPT`; `_sc_refresh_prompt` then calls
 `zle reset-prompt`. `_sc_precmd` starts each new prompt with `applied_padding` set to
-zero.
+zero. The adapter treats a failed request as zero required padding, leaving an ordinary
+unpadded prompt.
 
 ZLE emits and tracks these newlines itself, so its display model remains valid.
 SC never moves the terminal cursor or fakes a `SIGWINCH` to uncover a prompt.
 
-Each `SC_USER_COMMANDS` value begins with its display mode. An `ALTERNATE` command
-retains the active prompt and its padding; after successful alternate-screen
-restoration, ZLE resets that prompt in place. A `NORMAL` command discards the padding
-before running, so its ordinary output remains visible and ZLE draws an unpadded prompt
-after it. A failed `ALTERNATE` command also discards the old padding so diagnostics are
-not mistaken for a restored prompt.
-
-Both modes call `scctl reload` after the command. The reload-only request updates panel
-data without asking SC to infer a prompt origin from the command-output cursor. Command
-failures are returned from the widget for ZLE's configured feedback (normally a bell),
-and a reload failure prevents prompt reset against stale panel data.
+Directory and user-command widgets call `zle -I` before taking control of the terminal.
+Before invalidation, they add the current `BUFFERLINES` to the applied-padding count so
+the cursor row released below a multiline or wrapped editing display can be discounted.
+They then pass the action's status to `_sc_refresh_prompt`. On success, that function
+sends a preprompt request and resets the active prompt. On failure, it clears the stored
+padding and restores the unpadded `PROMPT` value without resetting the active ZLE
+prompt. In both cases the widget returns the action's status.
 
 `zle reset-prompt` repaints the current editing line in place: it re-expands and
 replaces the existing prompt, then redraws the unchanged `$BUFFER`. It does not accept

@@ -6,10 +6,8 @@
 typeset -g _sc_prompt_base=$PROMPT
 typeset -g _sc_prompt_padding=0
 
-# Maps ZLE key sequences to a display mode and command for the selected entry.
-# ALTERNATE commands like less and vi restore the existing screen; NORMAL commands leave
-# output at the terminal cursor. A standalone `{}` is replaced by the entry's absolute
-# path; when omitted, the path is appended.
+# Maps ZLE key sequences to a command for the selected entry. A standalone `{}` is
+# replaced by the entry's absolute path; when omitted, the path is appended.
 #
 # Key sequences (see config.h for more):
 # F1–F4:       \eOP, \eOQ, \eOR, \eOS
@@ -17,9 +15,9 @@ typeset -g _sc_prompt_padding=0
 # F5–F12:      \e[15~, \e[17~, \e[18~, \e[19~, \e[20~, \e[21~, \e[23~, \e[24~
 # Shift+F5–F12 use the corresponding number followed by ;2~
 typeset -gA SC_USER_COMMANDS=(
-    $'\eOR'     'ALTERNATE less -- {}'  # F3
-    $'\eOS'     'ALTERNATE vi -- {}'    # F4
-    $'\e[1;2R'  'NORMAL cat {}'         # Shift+F3 (for testing)
+    $'\eOR'     'less -- {}'  # F3
+    $'\eOS'     'vi -- {}'    # F4
+    $'\e[1;2R'  'cat {}'      # Shift+F3 (for testing)
 )
 
 # Enable SC's private input bindings only after ZLE has installed them below.
@@ -36,9 +34,8 @@ _sc_get_selected_entry() {
 }
 
 _sc_update_prompt() {
-    local reply prefix=''
-    reply=$(_scctl preprompt "$_sc_prompt_padding") || return
-    [[ $reply == <-> ]] || return  # exit if reply is not a non-negative integer.
+    local prefix='' reply=$(_scctl preprompt "$_sc_prompt_padding")
+    reply=${reply:-0}
     repeat $reply; do prefix+=$'\n'; done
     _sc_prompt_padding=$reply
     PROMPT="${prefix}${_sc_prompt_base}"
@@ -52,38 +49,46 @@ autoload -Uz add-zsh-hook
 # _sc_precmd will be called just before each new shell prompt is printed.
 add-zsh-hook precmd _sc_precmd
 
+# Must be called immediately following a shell command to capture its status ($?).
+# Refreshes the prompt while transparently passing that exit status back to the caller.
+# Accepts an optional status via $1 if deferred capture is needed.
 _sc_refresh_prompt() {
-    _sc_update_prompt || return
-    zle reset-prompt
+    local -i prev_status="${1:-$status}"
+
+    if (( prev_status == 0 )); then
+        _sc_update_prompt
+        zle reset-prompt
+    else
+        _sc_prompt_padding=0
+        PROMPT=$_sc_prompt_base
+    fi
+
+    return $prev_status
 }
 
-_sc_reload_panel() {
-    local reply
-    reply=$(_scctl reload) || return
-    [[ -z $reply ]]
+_sc_cd() {
+    [[ -n "$1" ]] || return
+    # Total line count of the current command line (== 0 usually).
+    local -i prompt_lines=$BUFFERLINES
+    zle -I && (( _sc_prompt_padding += prompt_lines ))
+    builtin cd -- "$1"
+    _sc_refresh_prompt
 }
 
 _sc_switch_panel() {
-    local reply
-    reply=$(_scctl focused_cwd) || return
-    builtin cd -- "$reply" || return
-    _sc_refresh_prompt
+    _sc_cd "$(_scctl focused_cwd)"
 }
 
 _sc_cd_parent() {
-    builtin cd -- .. || return
-    _sc_refresh_prompt
+    _sc_cd ".."
 }
 
 _sc_cd_child() {
     _sc_get_selected_entry || return
     [[ -d $REPLY ]] || return
-    builtin cd -- "$REPLY" || return
-    _sc_refresh_prompt
+    _sc_cd "$REPLY"
 }
 
-# Appends the basename of the selected item to the current command line,
-# properly shell-quoted.
 _sc_insert_selected_name() {
     _sc_get_selected_entry || return
     local selected_path=$REPLY
@@ -91,10 +96,9 @@ _sc_insert_selected_name() {
     CURSOR=${#BUFFER}
 }
 
-# Appends the full path of the selected item to the command line.
 _sc_insert_selected_path() {
     _sc_get_selected_entry || return
-    BUFFER+="${(q)${:-$PWD/$REPLY}}"
+    BUFFER+="${(q)${:-${PWD%/}/$REPLY}}"
     CURSOR=${#BUFFER}
 }
 
@@ -104,18 +108,11 @@ _sc_run_user_command() {
 
     local -a argv
     argv=(${(Q)${(z)action}})
-    (( $#argv >= 2 )) || return
-
-    local mode=${argv[1]}
-    shift argv
-    case $mode in
-        ALTERNATE | NORMAL) ;;
-        *) return 1 ;;
-    esac
+    (( $#argv )) || return
 
     _sc_get_selected_entry || return
 
-    local selected_path=$PWD/$REPLY
+    local selected_path=${PWD%/}/$REPLY
     local -i replaced=0 i
     for (( i = 1; i <= $#argv; ++i )); do
         if [[ ${argv[i]} == '{}' ]]; then
@@ -125,33 +122,11 @@ _sc_run_user_command() {
     done
     (( replaced )) || argv+=("$selected_path")
 
-    if [[ $mode == NORMAL ]]; then
-        # Normal output advances the terminal beyond the old prompt, so ZLE must not
-        # reuse that prompt's placement lines when the widget returns.
-        _sc_prompt_padding=0
-        PROMPT=$_sc_prompt_base
-    fi
-
-    zle -I
+    local -i prompt_lines=$BUFFERLINES
+    zle -I && (( _sc_prompt_padding += prompt_lines ))
     # Each array element is passed as one argument, so no additional quoting is needed.
     command "${argv[@]}"
-    local -i command_status=$?
-
-    # Both command modes may change the selected entry or directory contents. Reload
-    # without interpreting the post-command cursor as a prompt boundary.
-    _sc_reload_panel || return
-
-    if [[ $mode == ALTERNATE ]] && (( ! command_status )); then
-        # The alternate screen restored ZLE's existing prompt geometry.
-        zle reset-prompt
-    elif [[ $mode == ALTERNATE ]]; then
-        # A failed command may have produced diagnostics without restoring a screen.
-        _sc_prompt_padding=0
-        PROMPT=$_sc_prompt_base
-        return $command_status
-    fi
-
-    return $command_status
+    _sc_refresh_prompt
 }
 
 _sc_enter() {
@@ -161,8 +136,8 @@ _sc_enter() {
         return
     fi
 
-    # A hidden panel has no active selection, so an empty line retains ZLE's
-    # ordinary accept-line behavior.
+    # A hidden panel has no active selection, so an empty line retains ZLE's ordinary
+    # accept-line behavior.
     if ! _sc_get_selected_entry; then
         zle .accept-line
         return
@@ -170,9 +145,9 @@ _sc_enter() {
 
     # Enter the selected directory or execute the selected file.
     if [[ -d $REPLY ]]; then
-        builtin cd -- "$REPLY" && _sc_refresh_prompt
+        _sc_cd "$REPLY"
     else
-        BUFFER="${(q)${:-$PWD/$REPLY}}"
+        BUFFER="${(q)${:-${PWD%/}/$REPLY}}"
         CURSOR=${#BUFFER}
         zle .accept-line
     fi
