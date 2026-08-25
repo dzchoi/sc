@@ -186,35 +186,26 @@ refreshes the prompt after geometry settles.
 
 ### Appearance
   - Restore previous panel view as well as m_selected_idx.
-  - It has an ugly default application icon now.
+  - Title adds a space at the front and end of it like NC does.
+  - Inactive panel's title should not be highlighted like NC does.
   - Use '~' instead of '/home/stem' in the title.
+  - It has an ugly default application icon now.
   - Handle Symlinks and consider permissions.
-  - `history` selection menu (F1?).
   - Hangul typing shows the unnecessary combination box.
   - `Panel::dirty_` for each panel row instead of the entire panel
 
 ### Mouse
-  - Mouse selects text within the panel.
+  - Mouse selects text into the panel.
   - Scroll back with mouse wheel.
 
-### Key customization
-  - F5: fast copy using rsync?
+### Keys
+  - Shift+Tab: insert the other panel's selected name (if visible) or cwd (if hidden) into the command line.
+  - Ctrl+U: swap panels.
+  - F5: fast copy using `rsync`?
   - ??: diff directories, ...
+  - `history` selection menu (F1?).
+  - Global key binding in sc_config.hpp and user key/action bindings in sc.zsh.
   - Show memory usage, ...
-
-### Brief/detailed panel view
-
-### Support VFS using fuse-zip
-  - Not only viewing a file in zip, we can execute a file directly from the zip.
-
-### Group selection
-  - Ctrl+Enter inserts all entries in command line.
-
-### Misc.
-  - Clean up socket when killed by Ctrl+C.
-  - Support Ctrl+U to swap the left and right panels.
-  - Unfocused panel should also unhighlight the panel title.
-  - Shift+Tab inserts the other panel's cwd into command line.
 
 ### _scctl() written in zsh
 ```
@@ -233,3 +224,14 @@ _scctl() {
     printf %s $buf
 }
 ```
+
+### Brief/detailed panel view
+
+### Group selection
+  - Ctrl+Enter inserts all group entries in command line.
+
+### Support VFS using fuse-zip
+  - Not only viewing a file in zip, we can execute a file directly from the zip.
+
+### Misc.
+  - Clean up socket when killed by Ctrl+C.

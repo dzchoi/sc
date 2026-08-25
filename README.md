@@ -68,8 +68,8 @@ Press `Ctrl+O` to show or hide the panel. When it is visible:
 | `Page Up` / `Page Down` | Move by one page |
 | `Ctrl+Page Up` | Change to the parent directory |
 | `Ctrl+Page Down` | Change to the selected directory |
-| `Ctrl+Enter` | Add the selected name to the command line |
-| `Ctrl+Shift+Enter` | Add the selected full path to the command line |
+| `Ctrl+Enter` | Insert the selected name at the command cursor |
+| `Ctrl+Shift+Enter` | Insert the selected full path at the command cursor |
 | `F3` | View the selected entry with `less` |
 | `F4` | Edit the selected entry with `vi` |
 | `Enter` | Run the typed command, or act on the selected entry |

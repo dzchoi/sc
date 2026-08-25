@@ -76,6 +76,9 @@ a ZLE widget. `_sc_cd_child`, for example, queries SC for the selected item and
 runs `builtin cd -- "$REPLY"` only when that item is a directory. ZLE retains
 the current `BUFFER` throughout this operation.
 
+The insertion widgets quote the selected name or absolute path, insert it at
+ZLE's current `CURSOR` position, and advance the cursor past the inserted text.
+
 Ctrl+P switches between single and dual layout without changing focus. In dual mode,
 Tab focuses the other panel; `_sc_switch_panel` queries that panel's retained cwd,
 changes the shell to it, and refreshes the prompt. Ctrl+O hides or restores both panels

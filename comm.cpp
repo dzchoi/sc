@@ -154,13 +154,12 @@ void Comm::toggle_dual_panel()
 
 bool Comm::handle_key(unsigned long ksym, unsigned state)
 {
-    constexpr unsigned modifiers =
-        ShiftMask | ControlMask | Mod1Mask | Mod2Mask | Mod3Mask | Mod4Mask | Mod5Mask;
-    const unsigned active_modifiers = state & modifiers;
+    const unsigned modifiers = state &
+        (ShiftMask | ControlMask | Mod1Mask | Mod2Mask | Mod3Mask | Mod4Mask | Mod5Mask);
 
     // Forced hiding is handled before effective visibility so Ctrl+O can restore the
     // panels and retains its shortcut behavior while a child process owns the PTY.
-    if ( ksym == XK_o && active_modifiers == ControlMask ) {
+    if ( ksym == XK_o && modifiers == ControlMask ) {
         toggle_panels();
         return true;
     }
@@ -169,11 +168,11 @@ bool Comm::handle_key(unsigned long ksym, unsigned state)
     // as Up retain their normal behavior.
     if ( !any_panel_visible() ) return false;
 
-    if ( m_dual_panel && ksym == XK_Tab && active_modifiers == 0 ) {
+    if ( m_dual_panel && ksym == XK_Tab && modifiers == 0 ) {
         switch_panel();
         return true;
     }
-    if ( ksym == XK_p && active_modifiers == ControlMask ) {
+    if ( ksym == XK_p && modifiers == ControlMask ) {
         toggle_dual_panel();
         return true;
     }
@@ -185,12 +184,15 @@ bool Comm::handle_key(unsigned long ksym, unsigned state)
         shell_send_event(ZleEvent::CdChild);
         return true;
     }
-    if ( (ksym == XK_Return || ksym == XK_KP_Enter) && (state & ControlMask) ) {
-        shell_send_event((state & ShiftMask)
-            ? ZleEvent::InsertPath : ZleEvent::InsertName);
-        return true;
+    if ( ksym == XK_Return || ksym == XK_KP_Enter ) {
+        if ( state & ControlMask ) {
+            shell_send_event((state & ShiftMask)
+                ? ZleEvent::InsertPath : ZleEvent::InsertName);
+            return true;
+        }
+        // Plain Enter belongs to ZLE, which has the authoritative BUFFER.
+        return false;
     }
-    // Plain Enter belongs to ZLE, which has the authoritative BUFFER.
 
     return m_focus->handle_key(ksym);
 }

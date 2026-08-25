@@ -89,17 +89,20 @@ _sc_cd_child() {
     _sc_cd "$REPLY"
 }
 
+_sc_insert_at_cursor() {
+    local insertion=$1
+    BUFFER="${BUFFER[1,CURSOR]}${insertion}${BUFFER[CURSOR+1,-1]}"
+    (( CURSOR += ${#insertion} ))
+}
+
 _sc_insert_selected_name() {
     _sc_get_selected_entry || return
-    local selected_path=$REPLY
-    BUFFER+="${(q)selected_path:t}"
-    CURSOR=${#BUFFER}
+    _sc_insert_at_cursor "${(q)REPLY:t}"
 }
 
 _sc_insert_selected_path() {
     _sc_get_selected_entry || return
-    BUFFER+="${(q)${:-${PWD%/}/$REPLY}}"
-    CURSOR=${#BUFFER}
+    _sc_insert_at_cursor "${(q)${:-${PWD%/}/$REPLY}}"
 }
 
 _sc_run_user_command() {
