@@ -11,10 +11,9 @@ terminal and supplies its own two-pane interface. SC is different. It is a
 terminal overlay, not a program running inside the terminal. Your shell keeps
 its normal prompt, command history, scrollback, and editable command line.
 
-SC currently has one panel in the top-right portion of the terminal. A
-two-panel layout is planned. The panel appears while the shell owns the
-terminal and hides automatically when a child program, such as an editor or
-pager, takes control.
+SC can show one panel on the right or a dual-panel layout. The panels appear while
+the shell owns the terminal and hide automatically when a child program, such as an
+editor or pager, takes control.
 
 ## Install
 
@@ -37,21 +36,17 @@ make install
 The default install prefix is `/usr/local`. Use the appropriate privileges if
 your system requires them, or set `PREFIX` when invoking `make install`.
 
-## Configure the required zsh integration
+## Zsh integration
 
-SC requires zsh and its adapter. After installing, add this after your prompt
-or theme setup in `~/.zshrc`:
+SC requires zsh and loads its adapter automatically. No `.zshrc` entry is needed.
+At startup, SC uses a private `ZDOTDIR` shim to load `sc.zsh`, then restores the
+user's original `ZDOTDIR` and sources the effective `.zshenv`; zsh processes the
+remaining startup files normally. Launches that disable zsh startup files, such as
+`zsh -f`, are not supported.
 
-```zsh
-if [[ -n ${SC_SOCKET-} ]]; then
-  export SCCTL=/usr/local/bin/scctl
-  source /usr/local/share/sc/sc.zsh
-fi
-```
-
-If you installed to another prefix, change both paths. Then close and reopen
-SC. The condition ensures the required bindings load only in zsh instances
-started by SC.
+If upgrading from a version that required `source /usr/local/share/sc/sc.zsh` in
+`.zshrc`, remove that entry; the adapter now lives beside the executable and is loaded
+by SC itself.
 
 ## Use the panel
 
@@ -70,6 +65,8 @@ Press `Ctrl+O` to show or hide the panel. When it is visible:
 | `Ctrl+Page Down` | Change to the selected directory |
 | `Ctrl+Enter` | Insert the selected name at the command cursor |
 | `Ctrl+Shift+Enter` | Insert the selected full path at the command cursor |
+| `Ctrl+P` | Switch between single- and dual-panel layouts |
+| `Tab` | Focus the other panel in the dual-panel layout |
 | `F3` | View the selected entry with `less` |
 | `F4` | Edit the selected entry with `vi` |
 | `Enter` | Run the typed command, or act on the selected entry |
@@ -84,10 +81,17 @@ When a command is already being edited, `Enter` behaves normally and runs that
 command. When the panel is hidden, `Enter` always retains its normal shell behavior,
 including accepting an empty line.
 
-Function-key actions such as `F3` and `F4` are configurable in `sc.zsh` through
-the `SC_USER_COMMANDS` associative array near the top of the file. A standalone `{}`
-argument is replaced with the selected entry's absolute path; if `{}` is absent, the
-path is appended to the configured command.
+Function-key actions such as `F3` and `F4` are configured through the
+`SC_USER_COMMANDS` associative array. To replace the defaults, declare the array in
+`.zshrc`; a standalone `{}` argument is replaced with the selected entry's absolute
+path, and the path is appended when `{}` is absent:
+
+```zsh
+typeset -gA SC_USER_COMMANDS=(
+  $'\eOR' 'less -- {}'
+  $'\eOS' 'vi -- {}'
+)
+```
 
 ## Community patches
 

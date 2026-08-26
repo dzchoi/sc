@@ -1,10 +1,10 @@
-# zsh integration for SC. Source this after configuring PROMPT, for example:
-#   [[ -n $SC_SOCKET ]] && source /path/to/sc.zsh
+# zsh integration for SC. Auto-loaded via a generated .zshenv that SC drops into its
+# private runtime directory and points $ZDOTDIR at. Not intended to be sourced manually.
 
-[[ -n ${SC_SOCKET-} ]] || return 0
+# Only the generated shim supplies SC_ZSH_INIT; later manual sources are no-ops.
+[[ -n "${SC_ZSH_INIT-}" ]] || return 0
 
-typeset -g _sc_prompt_base=$PROMPT
-typeset -g _sc_prompt_padding=0
+# ---- User-command defaults (replace SC_USER_COMMANDS in .zshrc if needed) ---
 
 # Maps ZLE key sequences to a command for the selected entry. A standalone `{}` is
 # replaced by the entry's absolute path; when omitted, the path is appended.
@@ -20,10 +20,37 @@ typeset -gA SC_USER_COMMANDS=(
     $'\e[1;2R'  'cat {}'      # Shift+F3 (for testing)
 )
 
-# Enable SC's private input bindings only after ZLE has installed them below.
+# ---- Shim: restore ZDOTDIR and source the user's .zshenv --------------------
+# Runs at .zshenv time (before .zshrc). Aliases from /etc/zshenv may be active, so
+# command names used by the shim are quoted. Adapter widget installation is deferred
+# until the first precmd, after the remaining startup files have run.
+
+'builtin' 'unset' 'SC_ZSH_INIT'
+
+# Distinguish unset from empty so nested zsh matches the user's original state.
+if [[ -n "${SC_USER_ZDOTDIR+X}" ]]; then
+    'builtin' 'export' 'ZDOTDIR'="$SC_USER_ZDOTDIR"
+else
+    'builtin' 'unset' 'ZDOTDIR'
+fi
+'builtin' 'unset' 'SC_USER_ZDOTDIR'
+
+# We hijacked ZDOTDIR, so zsh skipped the user's own .zshenv. Source it now.
+_sc_shim_file="${ZDOTDIR-$HOME}/.zshenv"
+[[ -r "$_sc_shim_file" ]] && 'builtin' 'source' '--' "$_sc_shim_file"
+'builtin' 'unset' '_sc_shim_file'
+
+# Non-interactive shells and shells not launched by SC skip the adapter.
+[[ -o 'interactive' && -n "${SC_SOCKET-}" ]] || return 0
+
+# Keep SC's socket and helper private to this shell. _scctl exports SC_SOCKET only for
+# the helper invocation, so child commands and nested shells cannot attach to SC.
+typeset -g +x SC_SOCKET SCCTL
+
+# ---- Adapter functions (installed later by _sc_bootstrap) -------------------
 
 _scctl() {
-    command "${SCCTL:-scctl}" "$@"
+    SC_SOCKET="$SC_SOCKET" command "${SCCTL:-scctl}" "$@"
 }
 
 _sc_get_selected_entry() {
@@ -45,9 +72,6 @@ _sc_precmd() {
     _sc_prompt_padding=0
     _sc_update_prompt
 }
-autoload -Uz add-zsh-hook
-# _sc_precmd will be called just before each new shell prompt is printed.
-add-zsh-hook precmd _sc_precmd
 
 # Must be called immediately following a shell command to capture its status ($?).
 # Refreshes the prompt while transparently passing that exit status back to the caller.
@@ -156,27 +180,42 @@ _sc_enter() {
     fi
 }
 
-# Register Zsh Line Editor (ZLE) widgets.
-zle -N _sc_refresh_prompt
-zle -N _sc_cd_parent
-zle -N _sc_cd_child
-zle -N _sc_insert_selected_name
-zle -N _sc_insert_selected_path
-zle -N _sc_run_user_command
-zle -N _sc_enter
-zle -N _sc_switch_panel
+# ---- Bootstrap: install the adapter after the user's .zshrc has run ---------
 
-bindkey '\e[6770~' _sc_cd_parent
-bindkey '\e[6771~' _sc_cd_child
-bindkey '\e[6772~' _sc_insert_selected_name
-bindkey '\e[6773~' _sc_insert_selected_path
-bindkey '\e[6774~' _sc_refresh_prompt
-bindkey '\e[6775~' _sc_switch_panel
-bindkey '^M' _sc_enter
-bindkey '^J' _sc_enter
-() {
+autoload -Uz add-zsh-hook
+_sc_bootstrap() {
+    add-zsh-hook -d precmd _sc_bootstrap
+    unfunction _sc_bootstrap
+
+    typeset -g _sc_prompt_base=$PROMPT
+    typeset -g _sc_prompt_padding=0
+
+    add-zsh-hook precmd _sc_precmd
+
+    zle -N _sc_refresh_prompt
+    zle -N _sc_cd_parent
+    zle -N _sc_cd_child
+    zle -N _sc_insert_selected_name
+    zle -N _sc_insert_selected_path
+    zle -N _sc_run_user_command
+    zle -N _sc_enter
+    zle -N _sc_switch_panel
+
+    bindkey '\e[6770~' _sc_cd_parent
+    bindkey '\e[6771~' _sc_cd_child
+    bindkey '\e[6772~' _sc_insert_selected_name
+    bindkey '\e[6773~' _sc_insert_selected_path
+    bindkey '\e[6774~' _sc_refresh_prompt
+    bindkey '\e[6775~' _sc_switch_panel
+    bindkey '^M' _sc_enter
+    bindkey '^J' _sc_enter
+
     local key
     for key in "${(@k)SC_USER_COMMANDS}"; do
         bindkey "$key" _sc_run_user_command
     done
+
+    # First preprompt sends the padding request that Shell::init() awaits.
+    _sc_precmd
 }
+add-zsh-hook precmd _sc_bootstrap

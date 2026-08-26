@@ -20,7 +20,7 @@ CFLAGS  = -O2
 STRIP   ?= strip
 STCXXFLAGS = $(STCFLAGS) -std=c++17 -fno-exceptions -fno-rtti
 
-all: $(BUILDDIR)/$(BIN) $(BUILDDIR)/$(CTL)
+all: $(BUILDDIR)/$(BIN) $(BUILDDIR)/$(CTL) $(BUILDDIR)/sc.zsh
 
 config.h:
 	cp config.def.h config.h
@@ -51,6 +51,11 @@ $(BUILDDIR)/$(CTL): scctl.c | $(BUILDDIR)
 	$(CC) $(CFLAGS) -o $@ $<
 	$(STRIP) $(BUILDDIR)/$(CTL)
 
+# sc.zsh must sit beside the sc binary; Shell::setup_zsh_environment() resolves it as
+# <exe_dir>/sc.zsh at runtime.
+$(BUILDDIR)/sc.zsh: sc.zsh | $(BUILDDIR)
+	ln -sf ../sc.zsh $@
+
 clean:
 	rm -rf $(BUILDDIR) st-$(VERSION).tar.gz
 
@@ -69,19 +74,18 @@ install: $(BUILDDIR)/$(BIN) $(BUILDDIR)/$(CTL)
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/$(BIN)
 	cp -f $(BUILDDIR)/$(CTL) $(DESTDIR)$(PREFIX)/bin/$(CTL)
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/$(CTL)
+	cp -f sc.zsh $(DESTDIR)$(PREFIX)/bin/sc.zsh
+	chmod 644 $(DESTDIR)$(PREFIX)/bin/sc.zsh
 	mkdir -p $(DESTDIR)$(MANPREFIX)/man1
 	sed "s/VERSION/$(VERSION)/g" < st.1 > $(DESTDIR)$(MANPREFIX)/man1/st.1
 	chmod 644 $(DESTDIR)$(MANPREFIX)/man1/st.1
-	mkdir -p $(DESTDIR)$(PREFIX)/share/sc
-	cp -f sc.zsh $(DESTDIR)$(PREFIX)/share/sc/sc.zsh
-	chmod 644 $(DESTDIR)$(PREFIX)/share/sc/sc.zsh
 	tic -sx st.info
 	@echo Please see the README file regarding the terminfo entry of st.
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/$(BIN)
 	rm -f $(DESTDIR)$(PREFIX)/bin/$(CTL)
-	rm -f $(DESTDIR)$(PREFIX)/share/sc/sc.zsh
+	rm -f $(DESTDIR)$(PREFIX)/bin/sc.zsh
 	rm -f $(DESTDIR)$(MANPREFIX)/man1/st.1
 
 .PHONY: all clean dist install uninstall

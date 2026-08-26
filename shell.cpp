@@ -9,6 +9,7 @@
 #include <cstdlib>              // for std::getenv(), mkdtemp(), setenv()
 #include <cstring>              // for std::memcpy(), std::strcmp(), ...
 #include <cstdio>               // for std::snprintf()
+#include <dirent.h>             // for opendir(), readdir(), closedir()
 #include <limits.h>             // for PATH_MAX
 #include <poll.h>               // for poll(), pollfd, POLLIN, ...
 #include <string>               // for std::string, std::to_string()
@@ -29,56 +30,108 @@ void Shell::preinit()
 {
     if ( m_ipc_fd >= 0 ) return;
 
-    m_owner = ::getpid();
+    m_my_pid = ::getpid();
 
-    const auto create_directory = [this](const char* base) {
-        size_t base_length = std::strlen(base);
-        const size_t separator_length = base[base_length - 1] != '/';
-        if ( sizeof(m_directory) < base_length + separator_length
-          + sizeof(kDirectoryName) + sizeof(kSocketName) - 1 )
+    // Creates a unique temporary directory ("<base>/sc-XXXXXX") under `base`,
+    // populating m_runtime_dir[] with the name.
+    const auto create_directory = [this](const char* base) -> bool {
+        if ( !base ) return false;
+        assert( base[0] == '/' );  // an absolute path required.
+        const char* slash = base[std::strlen(base) - 1] == '/' ? "" : "/";
+        const int len = std::snprintf(m_runtime_dir, sizeof(m_runtime_dir), "%s%s%s",
+            base, slash, kDirTemplate);
+        if ( static_cast<size_t>(len) > sizeof(m_runtime_dir) - sizeof(kSocketName) )
             return false;
-
-        std::memcpy(m_directory, base, base_length);
-        if ( separator_length ) m_directory[base_length++] = '/';
-        std::memcpy(m_directory + base_length, kDirectoryName, sizeof(kDirectoryName));
-        return ::mkdtemp(m_directory) != nullptr;
+        return ::mkdtemp(m_runtime_dir) != nullptr;
     };
 
-    const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR");  // "/run/user/$UID/"
-    const bool created_in_runtime = runtime_dir && create_directory(runtime_dir);
-    if ( !created_in_runtime && !create_directory(kTmpDirectory) ) {
-        const int error = errno;
-        m_directory[0] = '\0';
-        die("mkdtemp for SC control socket failed: %s\n", std::strerror(error));
+    const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR");  // "/run/user/$UID"
+    if ( runtime_dir ) {
+        if ( runtime_dir[0] != '/' )
+            die("XDG_RUNTIME_DIR must be an absolute path\n");
+        cleanup_stale(runtime_dir);
+    }
+    cleanup_stale(kTmpDirectory);
+
+    if ( !create_directory(runtime_dir) && !create_directory(kTmpDirectory) ) {
+        m_runtime_dir[0] = '\0';
+        die("mkdtemp() for SC control socket failed: %s\n", std::strerror(errno));
     }
 
     m_ipc_fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-    if ( m_ipc_fd < 0 ) {
-        const int error = errno;
-        cleanup();
-        die("create SC control socket failed: %s\n", std::strerror(error));
-    }
+    if ( m_ipc_fd < 0 )
+        die("create SC control socket failed: %s\n", std::strerror(errno));
 
-    m_address.sun_family = AF_UNIX;
-    const size_t directory_length = std::strlen(m_directory);
-    std::memcpy(m_address.sun_path, m_directory, directory_length);
-    std::memcpy(m_address.sun_path + directory_length, kSocketName, sizeof(kSocketName));
+    m_socket.sun_family = AF_UNIX;
+    const size_t dir_length = std::strlen(m_runtime_dir);
+    std::memcpy(m_socket.sun_path, m_runtime_dir, dir_length);
+    std::memcpy(m_socket.sun_path + dir_length, kSocketName, sizeof(kSocketName));
 
-    if ( ::bind(m_ipc_fd, reinterpret_cast<sockaddr*>(&m_address), sizeof(m_address)) >= 0
-      && ::listen(m_ipc_fd, 4) >= 0 && ::chmod(m_address.sun_path, 0600) >= 0 ) {
-        ::setenv("SC_SOCKET", m_address.sun_path, 1);
+    if ( ::bind(m_ipc_fd, reinterpret_cast<sockaddr*>(&m_socket), sizeof(m_socket)) >= 0
+      && ::chmod(m_socket.sun_path, 0600) >= 0 && ::listen(m_ipc_fd, 4) >= 0 ) {
+        ::setenv("SC_SOCKET", m_socket.sun_path, 1);
+        setup_zsh_environment();
         return;
     }
+    // die() exits normally, so the static Shell destructor releases the socket, shim,
+    // and runtime directory.
+    die("initialize SC control socket failed: %s\n", std::strerror(errno));
+}
 
-    const int error = errno;
-    cleanup();
-    die("initialize SC control socket failed: %s\n", std::strerror(error));
+void Shell::setup_zsh_environment()
+{
+    char sc_dir[PATH_MAX];
+    const ssize_t n = ::readlink("/proc/self/exe", sc_dir, sizeof(sc_dir) - 1);
+    if ( n <= 0 )
+        die("readlink(/proc/self/exe) failed: %s\n", std::strerror(errno));
+    if ( static_cast<size_t>(n) == sizeof(sc_dir) - 1 )
+        die("SC directory exceeds PATH_MAX\n");
+    sc_dir[n] = '\0';
+
+    // Linux exposes /proc/self/exe as an absolute path.
+    *std::strrchr(sc_dir, '/') = '\0';
+
+    const std::string sczsh_path = std::string(sc_dir) + "/sc.zsh";
+    if ( struct stat st; ::stat(sczsh_path.c_str(), &st) != 0
+      || !S_ISREG(st.st_mode) || ::access(sczsh_path.c_str(), R_OK) != 0 )
+        die("sc.zsh is not a readable regular file: %s\n", sczsh_path.c_str());
+
+    const std::string scctl_path = std::string(sc_dir) + "/scctl";
+    if ( struct stat st; ::stat(scctl_path.c_str(), &st) != 0
+      || !S_ISREG(st.st_mode) || ::access(scctl_path.c_str(), X_OK) != 0 )
+        die("scctl is not an executable regular file: %s\n", scctl_path.c_str());
+
+    // Drop a one-line pass-through .zshenv into the runtime directory. sc.zsh itself
+    // restores the user's ZDOTDIR and defers adapter installation until the first prompt.
+    const size_t dir_length = std::strlen(m_runtime_dir);
+    std::memcpy(m_zshenv_path, m_runtime_dir, dir_length);
+    std::memcpy(m_zshenv_path + dir_length, kZshEnvName, sizeof(kZshEnvName));
+
+    FILE* const file = std::fopen(m_zshenv_path, "w");
+    if ( !file )
+        die("write %s failed: %s\n", m_zshenv_path, std::strerror(errno));
+    const int result = std::fputs(
+        "# Auto-generated by SC. Do not edit.\n"
+        "'builtin' 'source' '--' \"$SC_ZSH_INIT\"\n",
+        file);
+    assert( result != EOF );
+    std::fclose(file);
+    ::chmod(m_zshenv_path, 0600);
+
+    ::setenv("SC_ZSH_INIT", sczsh_path.c_str(), 1);
+    if ( const char* orig_zdotdir = std::getenv("ZDOTDIR") )
+        ::setenv("SC_USER_ZDOTDIR", orig_zdotdir, 1);
+    else
+        ::unsetenv("SC_USER_ZDOTDIR");
+    ::setenv("ZDOTDIR", m_runtime_dir, 1);
+
+    ::setenv("SCCTL", scctl_path.c_str(), 1);
 }
 
 void Shell::init(int pty_fd, pid_t shell_pid)
 {
     m_pty_fd = pty_fd;
-    m_pid = shell_pid;
+    m_shell_pid = shell_pid;
 
     const auto deadline = std::chrono::steady_clock::now()
         + std::chrono::milliseconds(kFirstPrepromptTimeoutMs);
@@ -93,7 +146,8 @@ void Shell::init(int pty_fd, pid_t shell_pid)
         const auto now = std::chrono::steady_clock::now();
         if ( now >= deadline )
             die("SC did not receive the first preprompt request within %d ms; "
-                "source sc.zsh from ~/.zshrc\n", kFirstPrepromptTimeoutMs);
+                "the shell must be zsh with normal rc-file loading enabled\n",
+                kFirstPrepromptTimeoutMs);
 
         const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
             deadline - now).count();
@@ -119,9 +173,10 @@ void Shell::service_ipc()
     const int client = ::accept4(m_ipc_fd, nullptr, nullptr, SOCK_CLOEXEC);
     if ( client < 0 ) return;
 
-    char request[32]{};
+    char request[32];
     std::string reply;
     if ( const ssize_t n = ::read(client, request, sizeof(request) - 1); n > 0 ) {
+        request[n] = '\0';
         if ( std::strcmp(request, "selected\n") == 0 ) {
             assert( m_preprompt_requested );
             if ( const auto entry = Comm::selected_entry() )
@@ -160,26 +215,70 @@ void Shell::service_ipc()
 
 void Shell::cleanup() noexcept
 {
-    if ( m_owner != ::getpid() ) return;
+    // Prevent the forked process from destroying the parent’s resources.
+    if ( m_my_pid != ::getpid() ) return;
 
     const int fd = m_ipc_fd;
     m_ipc_fd = -1;
     if ( fd >= 0 ) ::close(fd);
 
-    if ( m_address.sun_path[0] ) {
-        ::unlink(m_address.sun_path);
-        m_address.sun_path[0] = '\0';
+    if ( m_socket.sun_path[0] ) {
+        ::unlink(m_socket.sun_path);
+        m_socket.sun_path[0] = '\0';
     }
-    if ( m_directory[0] ) {
-        ::rmdir(m_directory);
-        m_directory[0] = '\0';
+    if ( m_zshenv_path[0] ) {
+        ::unlink(m_zshenv_path);
+        m_zshenv_path[0] = '\0';
     }
+    if ( m_runtime_dir[0] ) {
+        ::rmdir(m_runtime_dir);
+        m_runtime_dir[0] = '\0';
+    }
+}
+
+void Shell::cleanup_stale(const char* base)
+{
+    DIR* const dir = ::opendir(base);
+    if ( !dir ) return;
+    const char* slash = base[std::strlen(base) - 1] == '/' ? "" : "/";
+
+    while ( const auto* dirent = ::readdir(dir) ) {
+        if ( std::strlen(dirent->d_name) != sizeof(kDirTemplate) - 1
+          || std::strncmp(dirent->d_name, "sc-", 3) != 0 ) continue;
+
+        sockaddr_un socket{};
+        socket.sun_family = AF_UNIX;
+        const int len = std::snprintf(socket.sun_path, sizeof(socket.sun_path),
+            "%s%s%s/control", base, slash, dirent->d_name);
+        if ( static_cast<size_t>(len) >= sizeof(socket.sun_path) ) continue;
+
+        const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+        if ( fd < 0 ) continue;
+        const int rc = ::connect(fd, reinterpret_cast<sockaddr*>(&socket), sizeof(socket));
+        const int error = errno;
+        ::close(fd);
+        // Only ECONNREFUSED confirms the socket has no live owner; other errors
+        // (including ENOENT, which could be another SC racing between mkdtemp() and
+        // bind()) leave the entry alone.
+        if ( rc == 0 || error != ECONNREFUSED ) continue;
+
+        // Reuse socket.sun_path ("<base>/sc-XXXXXX/control") as the removal buffer.
+        // "/control" and "/.zshenv" share the same 8-char length, so the memcpy fits.
+        static_assert( sizeof(kSocketName) == sizeof(kZshEnvName) );
+        ::unlink(socket.sun_path);
+        char* const suffix = std::strrchr(socket.sun_path, '/');
+        std::memcpy(suffix, kZshEnvName, sizeof(kZshEnvName));
+        ::unlink(socket.sun_path);
+        *suffix = '\0';
+        ::rmdir(socket.sun_path);
+    }
+    ::closedir(dir);
 }
 
 std::string Shell::get_cwd() const
 {
     char proc[32];
-    std::snprintf(proc, sizeof(proc), "/proc/%d/cwd", static_cast<int>(m_pid));
+    std::snprintf(proc, sizeof(proc), "/proc/%d/cwd", static_cast<int>(m_shell_pid));
     char path[PATH_MAX];
     const ssize_t n = ::readlink(proc, path, sizeof(path) - 1);
     if ( n <= 0 )

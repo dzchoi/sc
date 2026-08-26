@@ -25,29 +25,29 @@ zsh ZLE       <-- private sequences via PTY ---  SC
 
 ## Activation and startup
 
-SC requires this adapter. Put it after prompt/theme configuration in `~/.zshrc`:
-
-```zsh
-if [[ -n ${SC_SOCKET-} ]]; then
-  export SCCTL=/usr/local/bin/scctl
-  source /usr/local/share/sc/sc.zsh
-fi
-```
-
-`SC_SOCKET` exists only in zsh started by SC. Do not source the adapter in the
-parent shell before launching SC: the condition is false there.
+SC loads the required adapter automatically; user startup files need no SC-specific
+entry. `sc`, `scctl`, and `sc.zsh` must remain in the same executable directory, as
+produced by both `make` and `make install`.
 
 Startup proceeds as follows:
 
 1. `st.c:ttynew()` calls `shell_preinit()` before it forks.
 2. `Shell::preinit()` creates an owner-only Unix socket in a private `sc-*` directory
-   under `$XDG_RUNTIME_DIR`, or under `/tmp` when the runtime directory is unavailable.
-3. `shell_preinit()` exports its path as `SC_SOCKET`; the child zsh inherits it.
-4. The child zsh reads `.zshrc`, sources `sc.zsh`, installs ZLE widgets and
-   bindings, then continues processing its startup files.
-5. `Shell::init()` polls both the PTY and control socket, processing startup output while
+   under an absolute `$XDG_RUNTIME_DIR`, or under `/tmp` when that directory is
+   unavailable. It writes a private `.zshenv` that sources the adjacent `sc.zsh`.
+3. The launcher preserves whether the user's `ZDOTDIR` was set, points `ZDOTDIR` at
+   the private directory, and exports absolute `SC_ZSH_INIT`, `SCCTL`, and `SC_SOCKET`
+   paths for the child zsh.
+4. The generated `.zshenv` sources `sc.zsh`. Its startup shim restores the user's
+   original `ZDOTDIR`, sources the user's effective `.zshenv`, and removes the
+   bootstrap-only variables. Zsh then selects `.zprofile`, `.zshrc`, and `.zlogin`
+   normally from the restored or user-modified `ZDOTDIR`.
+5. `sc.zsh` registers a one-shot `precmd` bootstrap. The bootstrap runs after startup
+   files, captures the configured prompt, and installs SC's hooks, widgets, and key
+   bindings.
+6. `Shell::init()` polls both the PTY and control socket, processing startup output while
    waiting up to one second for the first preprompt request.
-6. The first `precmd` hook calls `scctl preprompt`. SC synchronously establishes both
+7. The bootstrap calls `scctl preprompt`. SC synchronously establishes both
    panels' initial cwd and directory snapshots, replies with the prompt padding, and
    completes shell initialization before zsh prints the prompt.
 
@@ -55,6 +55,11 @@ The first preprompt handshake establishes both adapter availability and both pan
 data invariants before normal polling or input handling begins. SC exits with a
 configuration error if the mandatory adapter does not prepare a prompt within the
 deadline.
+
+The adapter guard makes a later manual source of the current `sc.zsh` a no-op. Remove
+old `.zshrc` entries that name the former `<prefix>/share/sc/sc.zsh` install path.
+`zsh -f`, a non-zsh `$SHELL`, or startup code that removes the one-shot hook cannot
+establish the handshake and therefore fails through the readiness deadline.
 
 ## Panel keys and ZLE
 
@@ -106,7 +111,10 @@ for Enter behavior.
 
 The Zsh adapter uses `scctl selected`, `scctl focused_cwd`, and
 `scctl preprompt <applied_padding>`. `scctl` connects to the socket named by
-`SC_SOCKET`, sends the request, and prints the response.
+`SC_SOCKET`, sends the request, and prints the response. After startup, `SC_SOCKET` and
+`SCCTL` are non-exported shell parameters. `_scctl` exports the socket only for one
+helper invocation, preventing ordinary child commands and nested shells from attaching
+to the outer SC process.
 
 During initialization, `Shell::init()` services the first preprompt request directly.
 Afterward, `x.c` adds `shell_ipc_fd()` to its `pselect()` fd set and calls
@@ -122,15 +130,20 @@ Afterward, `x.c` adds `shell_ipc_fd()` to its `pselect()` fd set and calls
   `Comm::adjust_padding()`: the total number of prompt-owned newlines needed
   after replacing the adapter's existing prefix;
 
-The process that creates the socket remains its sole cleanup owner across `fork()`.
-Normal `exit()` paths release it through `Shell`'s destructor. The `SIGCHLD` path calls
-the same idempotent cleanup explicitly before `_exit()`; that cleanup uses only
-async-signal-safe system calls. The forked shell cannot close or unlink the parent's
-socket through its inherited `Shell` state.
+The process that creates the socket and generated `.zshenv` remains their sole cleanup
+owner across `fork()`. Normal `exit()` paths release both files and their private
+directory through `Shell`'s destructor. The `SIGCHLD` path calls the same idempotent
+cleanup explicitly before `_exit()`; that cleanup uses only async-signal-safe system
+calls. The forked shell cannot remove the parent's resources through inherited `Shell`
+state. Before creating a directory, SC also removes abandoned `sc-XXXXXX` directories
+whose control socket returns `ECONNREFUSED`. This indicates that no listener existed at
+the instant of the probe; it is not ownership proof because another SC can briefly be
+between `bind()` and `listen()`.
 
 `$XDG_RUNTIME_DIR` is preferred because it is private to the logged-in user and intended
 for runtime sockets. SC falls back to its owner-only directory under `/tmp` when that
-variable is absent, relative, unusable, or too long for a Unix-domain socket address.
+variable is absent, unusable, or too long for a Unix-domain socket address. A configured
+empty or relative value violates the XDG contract and terminates startup.
 
 ## Directory refresh path
 
@@ -170,13 +183,9 @@ prompt. In both cases the widget returns the action's status.
 replaces the existing prompt, then redraws the unchanged `$BUFFER`. It does not accept
 the line or add a new prompt.
 
-## Bash
+## Shell support
 
-For the full design, Bash is substantially harder than zsh. I’d make zsh the supported shell first.
-Bash can cover part of it cleanly:
-- bind -x gives a handler access to READLINE_LINE, READLINE_POINT, and READLINE_MARK; changes are reflected back into the active editing buffer. So a Ctrl+PgDn handler can query SC, verify the selected entry is a directory, run cd, and preserve the draft. Bash bind -x documentation
-- PROMPT_COMMAND can add calculated prompt padding before Bash begins the next input line. Bash interactive-shell behavior
-
-But it lacks ZLE’s equivalent of “change the prompt and re-render this currently edited line.” Bash/Readline has redraw-current-line, but that refreshes the existing Readline display; it does not rerun PROMPT_COMMAND or reliably re-expand a changed PS1. Readline commands
-
-There is a second problem: a bind -x handler can inspect whether READLINE_LINE is empty, but it has no clean shell-level way to say “otherwise invoke Readline’s normal accept-line now.” Manually evaluating the buffer would diverge from normal Bash history, multiline input, completion, and error behavior.
+SC currently supports zsh only. Its integration depends on ZLE widgets and hooks to
+inspect the live editing buffer, change directories without discarding that buffer, and
+re-expand an active prompt after panel-driven changes. Bash and other shells are not
+supported because they do not provide the same integration boundary.

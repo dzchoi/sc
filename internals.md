@@ -63,11 +63,19 @@ pending resize deadline into `pselect()` so the loop wakes even while otherwise 
 
 ## State and control flow
 
-`Shell::preinit()` is the pre-fork boundary for the control socket: it creates the
-socket, exports its path as `SC_SOCKET`, and fails startup when socket setup fails. The
-shell inherits that environment. `Shell::init()` services both PTY output and IPC until
-the first valid `scctl preprompt` request establishes both panel snapshots. Normal panel
-polling and input handling begin only after that request completes.
+`Shell::preinit()` is the pre-fork boundary for the control socket and zsh bootstrap. It
+creates one owner-only runtime directory containing `control` and a generated `.zshenv`,
+validates the adjacent `sc.zsh` and `scctl`, and points the child shell's `ZDOTDIR` at
+the generated shim. `sc.zsh` restores the user's original `ZDOTDIR`, sources the user's
+effective `.zshenv`, and registers a one-shot precmd bootstrap. The bootstrap runs after
+the remaining startup files, captures their prompt, installs the adapter, and sends the
+first preprompt request. `Shell::init()` services both PTY output and IPC until that
+request establishes both panel snapshots. Normal panel polling and input handling begin
+only after it completes.
+
+After bootstrap, `SC_SOCKET` and `SCCTL` remain available only as non-exported shell
+parameters. `_scctl` exports `SC_SOCKET` for its helper process alone, so ordinary child
+commands and nested shells cannot inherit access to the outer panel.
 
 The first preprompt establishes `m_cwd` and `m_entries` together for both panels;
 `Shell::m_preprompt_requested` makes `Comm::reload_panels()` initialize both panels
@@ -141,6 +149,16 @@ refreshes the prompt after geometry settles.
   clears `_sc_prompt_padding` and `PROMPT`, while Zsh redraws the prompt representation
   that was expanded before the widget. A later in-place refresh can therefore report
   zero even though the active display still contains SC-owned padding.
+- Preserve the unset-versus-empty state of the user's `ZDOTDIR`. Zsh treats an empty
+  value as the root directory rather than applying its `$HOME` fallback.
+- Reject a configured `XDG_RUNTIME_DIR` unless it is absolute. An unset variable may
+  fall back to `/tmp`, but an empty or relative value violates the XDG boundary rather
+  than describing an unavailable runtime directory.
+- Stale runtime cleanup removes only an exact-length `sc-XXXXXX` entry whose existing
+  control socket returns `ECONNREFUSED`. This means no listener existed at probe time;
+  another SC between `bind()` and `listen()` can briefly produce the same result. In
+  particular, `ENOENT` may identify a live SC between `mkdtemp()` and `bind()` and must
+  not trigger removal.
 
 ## Decisions
 
@@ -166,6 +184,13 @@ refreshes the prompt after geometry settles.
   startup PTY and IPC activity until that request completes and initializes both panel
   snapshots, so later panel methods can rely on cwd and entry invariants without
   readiness checks.
+- Use one generated `.zshenv` rather than proxies for every user startup stage. Once the
+  shim restores the user's effective `ZDOTDIR` and sources `.zshenv`, zsh's normal
+  startup logic preserves later file selection and ordering. Defer adapter installation
+  to the first precmd so `.zshrc` prompt and command-map configuration is complete.
+- Resolve `sc.zsh` and `scctl` beside `/proc/self/exe` for both build and installed
+  layouts. This keeps runtime discovery independent of `PATH`; the Makefile creates the
+  development symlink and installs all three files together.
 - Keep focus non-null and represent forced hiding independently. This preserves the
   active pane across Ctrl+O without a second saved focus pointer. Single/dual mode is
   likewise independent, so Ctrl+P changes layout without changing the active directory.

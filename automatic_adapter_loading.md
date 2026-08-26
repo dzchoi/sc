@@ -1,160 +1,111 @@
 # Automatic zsh adapter loading
 
-## Goal
+## Goal and readiness invariant
 
-SC should load its required zsh adapter automatically without modifying the user's
-startup files or injecting shell commands through the PTY. The user's normal zsh
-configuration must retain its ordering and `ZDOTDIR` behavior, and `Shell::init()` must
-not return until the adapter has sent the first preprompt request.
-
-## Startup invariant
-
-Before normal panel polling, IPC service, or input handling begins:
+SC loads its required zsh adapter without modifying user startup files or injecting
+shell commands through the PTY. Before normal panel polling, IPC service, or input
+handling begins:
 
 - the user's applicable zsh startup files have completed;
 - `sc.zsh` has installed its hooks, widgets, and private key bindings;
-- the first `scctl preprompt` request has established the panel's authoritative cwd and
-  nonempty directory snapshot.
+- the first `scctl preprompt` request has established both panels' authoritative cwd
+  and nonempty directory snapshots.
 
-Adapter startup and later panel actions are separate mechanisms. Startup uses zsh's
-startup-file mechanism; runtime actions continue to use fixed private ZLE events. SC
-must not construct or inject arbitrary shell-language commands through the PTY.
+`Shell::init()` services startup PTY output and the private socket during a bounded
+wait. A valid first preprompt request is the sole readiness signal.
 
-## Private `ZDOTDIR` proxy
+## Single-file `ZDOTDIR` shim
 
-`shell_preinit()` runs immediately before the shell is forked. Extend that preparation
-to create a private, owner-only startup directory and point `ZDOTDIR` at it for the
-initial zsh process. This keeps the existing `st.c` and `x.c` integration unchanged.
+`Shell::preinit()` requires a configured `$XDG_RUNTIME_DIR` to be absolute, as mandated
+by the XDG Base Directory specification. It creates one owner-only `sc-XXXXXX` directory
+there, falling back to `/tmp` only when the variable is unset or directory creation
+fails. It places the control socket and a generated `.zshenv` in that directory. Before
+the shell fork, it preserves both the presence and value of the original `ZDOTDIR`, then
+exports this bootstrap environment:
 
-Before changing `ZDOTDIR`, preserve both whether it was originally set and its value.
-An unset `ZDOTDIR` must retain zsh's normal `$HOME` fallback; it must not be conflated
-with an explicitly set empty value.
+- `ZDOTDIR=<private-directory>` selects the generated `.zshenv`;
+- `SC_ZSH_INIT=<executable-directory>/sc.zsh` identifies the adapter;
+- `SCCTL=<executable-directory>/scctl` identifies the helper;
+- `SC_SOCKET=<private-directory>/control` identifies this SC instance.
 
-Create proxy files for the user startup stages selected through `ZDOTDIR`:
+The generated `.zshenv` contains an identifying comment and one executable line: a
+quoted `source "$SC_ZSH_INIT"`. The adapter's shim immediately unsets `SC_ZSH_INIT`,
+restores the original `ZDOTDIR` including its unset-versus-empty distinction, and
+sources the user's effective `.zshenv`. Any `ZDOTDIR` change made there remains active,
+so zsh itself selects the subsequent
+`.zprofile`, `.zshrc`, and `.zlogin` in normal order. This single proxy is sufficient;
+later startup-file proxies would duplicate zsh's own selection logic.
 
-- `.zshenv`
-- `.zprofile`
-- `.zshrc`
-- `.zlogin`
+Non-interactive shells restore and source `.zshenv` but skip adapter installation.
+Interactive SC shells register a one-shot `_sc_bootstrap` precmd hook. The first
+precmd occurs after applicable startup files; the bootstrap captures the configured
+prompt, installs the permanent precmd hook, ZLE widgets, and bindings, then issues the
+first synchronous preprompt transaction.
 
-Each proxy temporarily restores the user's effective `ZDOTDIR`, sources the matching
-user file when readable, records any `ZDOTDIR` change made by that file, and restores
-the private directory so zsh selects the next proxy. This preserves changes such as a
-user `.zshenv` selecting a different directory for the later startup files.
+`sc.zsh` accepts only the bootstrap source identified by `SC_ZSH_INIT`. A later manual
+source of the current adapter therefore becomes a no-op instead of reinstalling hooks
+or re-sourcing `.zshenv`. Upgrade instructions still require removing entries that name
+the former `<prefix>/share/sc/sc.zsh` path, which is no longer installed.
 
-The `.zshrc` proxy performs these operations in order:
+## Asset layout and validation
 
-1. Source the user's effective `.zshrc`.
-2. Source SC's adapter.
-3. For a non-login shell, restore the user's final `ZDOTDIR`.
+`/proc/self/exe` supplies the executable's canonical directory. Both supported layouts
+place all three runtime files together:
 
-For a login shell, keep the proxy directory active until `.zlogin`. Its proxy sources
-the user's effective `.zlogin` and then restores the user's final `ZDOTDIR`. No
-`.zlogout` proxy is required because zsh will subsequently select the user's own
-`.zlogout` through the restored `ZDOTDIR`.
+- development: `.build/sc`, `.build/scctl`, and the `.build/sc.zsh` symlink;
+- installed: `<prefix>/bin/sc`, `<prefix>/bin/scctl`, and `<prefix>/bin/sc.zsh`.
 
-System-wide startup files remain under zsh's control and retain their normal ordering
-relative to each proxied user file.
-
-## Adapter and helper discovery
-
-Resolve and validate `sc.zsh` and `scctl` before forking. Pass their absolute paths to
-the proxy through environment variables instead of interpolating them into generated
-shell code; this avoids pathname quoting problems.
-
-Support the two normal layouts:
-
-- Development: `scctl` beside the executable in `.build/`, with `sc.zsh` in its parent
-  directory.
-- Installed: `scctl` beside the executable, with `sc.zsh` in `../share/sc/`.
-
-Allow explicit environment overrides for unusual or relocated layouts. Fail before
-forking with a precise diagnostic when either required asset is missing, unreadable, or
-not executable as applicable.
-
-## Readiness ownership
-
-Make `sc.zsh` idempotent so an existing manual integration does not install duplicate
-hooks or bindings. The first `precmd` invocation naturally occurs after all applicable
-startup files, so its `scctl preprompt` request is the sole readiness signal even when an
-existing manual integration sourced the adapter earlier.
-
-`Shell::init()` polls startup PTY output and the control socket within one bounded wait.
-It returns only after servicing a valid preprompt request, which initializes the panel cwd
-and directory entries before replying to zsh.
+SC validates that `sc.zsh` is a readable regular file and `scctl` is an executable
+regular file before forking. The generated file remains protected by its owner-only
+directory and is changed to mode `0600`. Path resolution, directory creation, and file
+open failures terminate startup rather than allowing a partially integrated shell.
 
 ## Environment boundary
 
-The launcher supplies the resolved `scctl` pathname to `sc.zsh`; the adapter does not
-need to execute an `export` command through the terminal.
-
-After initialization, avoid exporting `SC_SOCKET` to arbitrary child commands and
-nested shells. Keep it as a shell parameter and provide it only to `scctl`:
+After the shim has identified an interactive SC shell, `SC_SOCKET` and `SCCTL` become
+non-exported global parameters. The adapter exposes the socket to the helper only for
+the duration of a request:
 
 ```zsh
 _scctl() {
-    SC_SOCKET=$SC_SOCKET command "$SCCTL" "$@"
+    SC_SOCKET=$SC_SOCKET command "${SCCTL:-scctl}" "$@"
 }
 ```
 
-This confines access to the outer zsh adapter and prevents a nested zsh from
-accidentally attaching itself to the outer panel. `SCCTL` likewise only needs to be a
-global shell parameter because its value is expanded before the helper is executed.
+Ordinary child processes and nested shells therefore cannot accidentally attach to the
+outer panel. Runtime actions use fixed private ZLE events; SC never constructs or
+injects arbitrary shell-language commands through the PTY.
 
-## Resource ownership and cleanup
+## Resource ownership and recovery
 
-Use a cohesive bootstrap owner for the private startup directory and its generated
-files rather than making `Shell` own unrelated zsh configuration. Record every fixed
-pathname during initialization so cleanup requires only async-signal-safe operations:
+`Shell` owns the socket, generated `.zshenv`, and private directory. It records both
+file paths before forking so normal destruction and the `SIGCHLD` path share one
+idempotent cleanup using async-signal-safe operations. The creator PID guard prevents
+the forked shell from removing its parent's resources.
 
-- close owned descriptors;
-- unlink the generated proxy files;
-- remove the private directory.
-
-As with `Shell`, guard cleanup with the creator PID. Normal destruction and the
-`SIGCHLD` path must invoke the same idempotent cleanup, while the forked shell must not
-remove resources owned by its parent.
-
-## Runtime external commands
-
-Automatic adapter loading must not become a generic command-injection facility. A
-future action such as F3 viewing a selected file should add a fixed private ZLE event.
-Its zsh widget queries the selected entry over IPC and directly invokes:
-
-```zsh
-zle -I
-command less -- "$PWD/$REPLY"
-zle reset-prompt
-```
-
-The command never enters `BUFFER` or shell history. While `less` owns the foreground
-PTY, `Panel::visible()` hides the panel; the panel returns when zsh
-regains the PTY.
+A crash can bypass cleanup. Before allocating a new directory, SC scans only names of
+the exact `sc-XXXXXX` length in the selected runtime parent and `/tmp`. It removes an
+entry only when connecting to its control socket returns `ECONNREFUSED`, indicating
+that the socket had no listener when probed. `ENOENT` and all other errors are left
+untouched because another SC may be between `mkdtemp()` and `bind()`. Another SC can
+also briefly return `ECONNREFUSED` between `bind()` and `listen()`; cleanup relies on
+that interval not overlapping the scan.
 
 ## Expected limitations
 
-Invocations such as `zsh -f`, or user startup code that disables `RCS` before the
-`.zshrc` stage, bypass the mechanism SC requires. They should fail through the existing
-prompt-readiness deadline with a configuration diagnostic rather than fall back to a
-partially integrated shell.
+SC requires an interactive zsh with normal startup-file loading. `zsh -f`, a different
+`$SHELL`, or user startup code that deletes `_sc_bootstrap` from the precmd hooks cannot
+complete readiness and fails through the one-second timeout. The timeout covers the
+user's complete startup sequence, not just execution time inside `sc.zsh`.
 
-The prompt timeout covers the user's complete applicable startup sequence, not only the
-execution time of `sc.zsh`.
+The `_sc_` function namespace and SC bootstrap variables are reserved during startup.
+User configuration can replace `SC_USER_COMMANDS` in `.zshrc`; widget bindings consume
+its final value when `_sc_bootstrap` runs.
 
-## Verification
+## Verification matrix
 
-Cover at least these cases:
-
-- no user `.zshrc`;
-- prompt and theme configuration in `.zshrc`;
-- an existing manual `source sc.zsh` line;
-- initially unset and explicitly set `ZDOTDIR`;
-- `ZDOTDIR` changed by `.zshenv` or `.zprofile`;
-- login and non-login shells;
-- paths containing spaces;
-- missing `sc.zsh` or `scctl`;
-- the one-second first-preprompt timeout;
-- nested zsh processes not inheriting the outer integration;
-- final cwd changes made during startup;
-- normal-exit and `SIGCHLD` cleanup;
-- exact startup ordering using sentinel commands in every startup file.
+Exercise startup with no `.zshrc`, prompt configuration in `.zshrc`, an obsolete
+manual adapter source, unset/empty/custom `ZDOTDIR`, a `.zshenv` that changes `ZDOTDIR`,
+login and non-login shells, paths containing spaces, missing companion assets, timeout,
+nested zsh, startup cwd changes, normal and `SIGCHLD` cleanup, abandoned runtime
+directories, and sentinel output from every applicable startup file.
