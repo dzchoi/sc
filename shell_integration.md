@@ -15,18 +15,17 @@ zsh ZLE       <-- private sequences via PTY ---  SC
 
 | Component | Responsibility |
 | --- | --- |
-| `sc.zsh` | Owns ZLE's command buffer, `cd`, prompt construction, and Enter behavior. |
+| `sc.zsh` | Owns ZLE's command buffer, `cd`, prompt construction, Enter behavior, and socket client. |
 | `comm.cpp` | Coordinates focus, layout, visibility, shared redraw decisions, and IPC-facing panel state. |
 | `panel.cpp` | Owns each pane's directory snapshot, selection, geometry, and cached rendering state. |
 | `shell.cpp` | Owns the managed-shell socket protocol, PTY events, and shell state reads. |
 | `st.c` | Starts the managed shell and connects its PTY lifecycle to shell initialization. |
 | `x.c` | Watches the control socket in the main event loop. |
-| `scctl` | Queries the private socket for zsh. |
 
 ## Activation and startup
 
 SC loads the required adapter automatically; user startup files need no SC-specific
-entry. `sc`, `scctl`, and `sc.zsh` must remain in the same executable directory, as
+entry. `sc` and `sc.zsh` must remain in the same executable directory, as
 produced by both `make` and `make install`.
 
 Startup proceeds as follows:
@@ -36,7 +35,7 @@ Startup proceeds as follows:
    under an absolute `$XDG_RUNTIME_DIR`, or under `/tmp` when that directory is
    unavailable. It writes a private `.zshenv` that sources the adjacent `sc.zsh`.
 3. The launcher preserves whether the user's `ZDOTDIR` was set, points `ZDOTDIR` at
-   the private directory, and exports absolute `SC_ZSH_INIT`, `SCCTL`, and `SC_SOCKET`
+   the private directory, and exports absolute `SC_ZSH_INIT` and `SC_SOCKET`
    paths for the child zsh.
 4. The generated `.zshenv` sources `sc.zsh`. Its startup shim restores the user's
    original `ZDOTDIR`, sources the user's effective `.zshenv`, and removes the
@@ -47,7 +46,7 @@ Startup proceeds as follows:
    bindings.
 6. `Shell::init()` polls both the PTY and control socket, processing startup output while
    waiting up to one second for the first preprompt request.
-7. The bootstrap calls `scctl preprompt`. SC synchronously establishes both
+7. The bootstrap sends a `preprompt` request. SC synchronously establishes both
    panels' initial cwd and directory snapshots, replies with the prompt padding, and
    completes shell initialization before zsh prints the prompt.
 
@@ -109,12 +108,13 @@ for Enter behavior.
 
 ## Control socket
 
-The Zsh adapter uses `scctl selected`, `scctl focused_cwd`, and
-`scctl preprompt <applied_padding>`. `scctl` connects to the socket named by
-`SC_SOCKET`, sends the request, and prints the response. After startup, `SC_SOCKET` and
-`SCCTL` are non-exported shell parameters. `_scctl` exports the socket only for one
-helper invocation, preventing ordinary child commands and nested shells from attaching
-to the outer SC process.
+The Zsh adapter sends `selected`, `focused_cwd`, and
+`preprompt <applied_padding>` through `_scctl`. The function uses zsh's socket and
+system modules to connect to the non-exported `SC_SOCKET`, send one request, read its
+response through EOF, close the descriptor, and place the response in `REPLY`.
+Callers consume `REPLY` directly, so requests require neither an external helper nor a
+command-substitution subshell. Ordinary child commands and nested shells cannot attach
+to the outer SC process because they do not inherit the socket path.
 
 During initialization, `Shell::init()` services the first preprompt request directly.
 Afterward, `x.c` adds `shell_ipc_fd()` to its `pselect()` fd set and calls
@@ -160,8 +160,8 @@ ordering state across the PTY and control-socket channels.
 `Comm` reads the terminal cursor through `tgetcursor()` when it determines whether a
 prompt needs padding below the panels' shared vertical extent.
 
-Before zsh renders or refreshes a prompt, `_sc_update_prompt` calls
-`scctl preprompt <applied_padding>`. SC refreshes the focused panel snapshot, discounts
+Before zsh renders or refreshes a prompt, `_sc_update_prompt` sends
+`preprompt <applied_padding>`. SC refreshes the focused panel snapshot, discounts
 the adapter's existing prompt-owned newlines from the terminal cursor row, and returns
 the total number of real newlines needed in `PROMPT`; `_sc_refresh_prompt` then calls
 `zle reset-prompt`. `_sc_precmd` starts each new prompt with `applied_padding` set to

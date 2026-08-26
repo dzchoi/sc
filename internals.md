@@ -65,7 +65,7 @@ pending resize deadline into `pselect()` so the loop wakes even while otherwise 
 
 `Shell::preinit()` is the pre-fork boundary for the control socket and zsh bootstrap. It
 creates one owner-only runtime directory containing `control` and a generated `.zshenv`,
-validates the adjacent `sc.zsh` and `scctl`, and points the child shell's `ZDOTDIR` at
+validates the adjacent `sc.zsh`, and points the child shell's `ZDOTDIR` at
 the generated shim. `sc.zsh` restores the user's original `ZDOTDIR`, sources the user's
 effective `.zshenv`, and registers a one-shot precmd bootstrap. The bootstrap runs after
 the remaining startup files, captures their prompt, installs the adapter, and sends the
@@ -73,9 +73,10 @@ first preprompt request. `Shell::init()` services both PTY output and IPC until 
 request establishes both panel snapshots. Normal panel polling and input handling begin
 only after it completes.
 
-After bootstrap, `SC_SOCKET` and `SCCTL` remain available only as non-exported shell
-parameters. `_scctl` exports `SC_SOCKET` for its helper process alone, so ordinary child
-commands and nested shells cannot inherit access to the outer panel.
+After bootstrap, `SC_SOCKET` remains available only as a non-exported shell parameter,
+so ordinary child commands and nested shells cannot inherit access to the outer panel.
+`_scctl` uses zsh builtins to open one connection per transaction and returns its reply
+through `REPLY`, avoiding both an external helper and command substitution.
 
 The first preprompt establishes `m_cwd` and `m_entries` together for both panels;
 `Shell::m_preprompt_requested` makes `Comm::reload_panels()` initialize both panels
@@ -100,7 +101,7 @@ synthetic `..` index-zero default. On a same-cwd reload, the selected entry's ab
 path is restored when it remains. Reloading retains the viewport; `render()` moves it
 only when needed to keep the restored selection visible.
 
-`scctl preprompt <applied_padding>` is the synchronous prompt boundary. It reads the
+`preprompt <applied_padding>` is the synchronous prompt boundary. It reads the
 shell cwd, reconciles the focused panel's cwd, reloads its entries even when the cwd is
 unchanged, and finally computes prompt padding. Current widget paths use preprompt after
 successful actions and send no request after failures.
@@ -140,7 +141,7 @@ refreshes the prompt after geometry settles.
   trap but is more expensive.
 - The panels' shared covered row range is the smallest correct invalidation for normal
   visibility changes. Full-terminal invalidation is reserved for terminal-wide changes.
-- `scctl preprompt` cursor arithmetic is valid only when its argument accounts for all
+- `preprompt` cursor arithmetic is valid only when its argument accounts for all
   rows between the unpadded prompt origin and the terminal cursor. The Zsh adapter adds
   the current `BUFFERLINES` before `zle -I` so multiline and wrapped edit buffers are
   included. A successful command that leaves primary-screen output still makes the
@@ -178,8 +179,12 @@ refreshes the prompt after geometry settles.
   placeholder is absent, then invokes the vector directly without evaluating shell
   code.
 - Keep directory reconciliation, entry reload, and padding calculation in the
-  synchronous `scctl preprompt` transaction. Frame polling remains responsible only
-  for presentation state.
+  synchronous `preprompt` transaction. Frame polling remains responsible only for
+  presentation state.
+- Keep one control-socket connection per request and use EOF as the response boundary.
+  `_scctl` returns the response through `REPLY`, so this retains unambiguous framing for
+  paths containing newlines without paying process-creation or command-substitution
+  costs or introducing persistent-connection recovery state.
 - Treat the first successful preprompt request as shell readiness. `Shell::init()` services
   startup PTY and IPC activity until that request completes and initializes both panel
   snapshots, so later panel methods can rely on cwd and entry invariants without
@@ -188,9 +193,9 @@ refreshes the prompt after geometry settles.
   shim restores the user's effective `ZDOTDIR` and sources `.zshenv`, zsh's normal
   startup logic preserves later file selection and ordering. Defer adapter installation
   to the first precmd so `.zshrc` prompt and command-map configuration is complete.
-- Resolve `sc.zsh` and `scctl` beside `/proc/self/exe` for both build and installed
-  layouts. This keeps runtime discovery independent of `PATH`; the Makefile creates the
-  development symlink and installs all three files together.
+- Resolve `sc.zsh` beside `/proc/self/exe` for both build and installed layouts. This
+  keeps runtime discovery independent of `PATH`; the Makefile creates the development
+  symlink and installs both runtime files together.
 - Keep focus non-null and represent forced hiding independently. This preserves the
   active pane across Ctrl+O without a second saved focus pointer. Single/dual mode is
   likewise independent, so Ctrl+P changes layout without changing the active directory.
@@ -227,28 +232,10 @@ refreshes the prompt after geometry settles.
   - Shift+Tab: insert the other panel's selected name (if visible) or cwd (if hidden) into the command line.
   - Ctrl+U: swap panels.
   - F5: fast copy using `rsync`?
-  - ??: diff directories, ...
+  - ??: diff directories using `rsync -avun`, ...
   - `history` selection menu (F1?).
   - Global key binding in sc_config.hpp and user key/action bindings in sc.zsh.
   - Show memory usage, ...
-
-### _scctl() written in zsh
-```
-zmodload zsh/net/socket
-zmodload zsh/system
-
-_scctl() {
-    [[ -n ${SC_SOCKET-} ]] || return 1
-    local REPLY fd
-    zsocket -- $SC_SOCKET || return 1  # $REPLY = client fd
-    fd=$REPLY
-    print -u $fd -r -- "$*" || { exec {fd}>&-; return 1; }
-    local buf
-    sysread -s 4096 buf <&fd  # up to 4096 bytes
-    exec {fd}>&-
-    printf %s $buf
-}
-```
 
 ### Brief/detailed panel view
 

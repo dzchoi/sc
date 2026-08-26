@@ -8,7 +8,7 @@ handling begins:
 
 - the user's applicable zsh startup files have completed;
 - `sc.zsh` has installed its hooks, widgets, and private key bindings;
-- the first `scctl preprompt` request has established both panels' authoritative cwd
+- the first `preprompt` request has established both panels' authoritative cwd
   and nonempty directory snapshots.
 
 `Shell::init()` services startup PTY output and the private socket during a bounded
@@ -25,7 +25,6 @@ exports this bootstrap environment:
 
 - `ZDOTDIR=<private-directory>` selects the generated `.zshenv`;
 - `SC_ZSH_INIT=<executable-directory>/sc.zsh` identifies the adapter;
-- `SCCTL=<executable-directory>/scctl` identifies the helper;
 - `SC_SOCKET=<private-directory>/control` identifies this SC instance.
 
 The generated `.zshenv` contains an identifying comment and one executable line: a
@@ -50,27 +49,23 @@ the former `<prefix>/share/sc/sc.zsh` path, which is no longer installed.
 ## Asset layout and validation
 
 `/proc/self/exe` supplies the executable's canonical directory. Both supported layouts
-place all three runtime files together:
+place both runtime files together:
 
-- development: `.build/sc`, `.build/scctl`, and the `.build/sc.zsh` symlink;
-- installed: `<prefix>/bin/sc`, `<prefix>/bin/scctl`, and `<prefix>/bin/sc.zsh`.
+- development: `.build/sc` and the `.build/sc.zsh` symlink;
+- installed: `<prefix>/bin/sc` and `<prefix>/bin/sc.zsh`.
 
-SC validates that `sc.zsh` is a readable regular file and `scctl` is an executable
-regular file before forking. The generated file remains protected by its owner-only
-directory and is changed to mode `0600`. Path resolution, directory creation, and file
-open failures terminate startup rather than allowing a partially integrated shell.
+SC validates that `sc.zsh` is a readable regular file before forking. The generated
+file remains protected by its owner-only directory and is changed to mode `0600`.
+Path resolution, directory creation, and file open failures terminate startup rather
+than allowing a partially integrated shell.
 
 ## Environment boundary
 
-After the shim has identified an interactive SC shell, `SC_SOCKET` and `SCCTL` become
-non-exported global parameters. The adapter exposes the socket to the helper only for
-the duration of a request:
-
-```zsh
-_scctl() {
-    SC_SOCKET=$SC_SOCKET command "${SCCTL:-scctl}" "$@"
-}
-```
+After the shim has identified an interactive SC shell, `SC_SOCKET` becomes a
+non-exported global parameter. The adapter loads `zsh/net/socket` and `zsh/system`,
+then performs each transaction entirely through shell builtins. `_scctl` opens a fresh
+connection, writes one request, reads its nonempty response through EOF, and places the
+response in `REPLY` before closing the descriptor.
 
 Ordinary child processes and nested shells therefore cannot accidentally attach to the
 outer panel. Runtime actions use fixed private ZLE events; SC never constructs or

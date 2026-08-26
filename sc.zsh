@@ -43,28 +43,57 @@ _sc_shim_file="${ZDOTDIR-$HOME}/.zshenv"
 # Non-interactive shells and shells not launched by SC skip the adapter.
 [[ -o 'interactive' && -n "${SC_SOCKET-}" ]] || return 0
 
-# Keep SC's socket and helper private to this shell. _scctl exports SC_SOCKET only for
-# the helper invocation, so child commands and nested shells cannot attach to SC.
-typeset -g +x SC_SOCKET SCCTL
+# Keep SC's socket private to this shell so child commands and nested shells cannot
+# attach to SC. Each request uses zsh builtins and closes its descriptor before return.
+typeset -g +x SC_SOCKET
+
+'builtin' 'zmodload' zsh/net/socket || return 1
+'builtin' 'zmodload' zsh/system || return 1
 
 # ---- Adapter functions (installed later by _sc_bootstrap) -------------------
 
 _scctl() {
-    SC_SOCKET="$SC_SOCKET" command "${SCCTL:-scctl}" "$@"
+    [[ -n ${SC_SOCKET-} && $# -gt 0 ]] || { REPLY=''; return 1; }
+
+    local request="${(j: :)@}" fd chunk response=''
+    local -i read_status
+
+    'builtin' 'zsocket' -- "$SC_SOCKET" 2>/dev/null || { REPLY=''; return 1; }
+    fd=$REPLY
+
+    if ! 'builtin' 'print' -r -u "$fd" -- "$request"; then
+        'builtin' 'exec' {fd}>&-
+        REPLY=''
+        return 1
+    fi
+
+    while (( 1 )); do
+        'builtin' 'sysread' -i "$fd" -s 4096 chunk
+        read_status=$?
+        (( read_status == 0 )) || break
+        response+=$chunk
+    done
+    'builtin' 'exec' {fd}>&-
+
+    # Status 5 is EOF. A recognized request always returns a nonempty response and EOF
+    # frames it.
+    if (( read_status != 5 )) || [[ -z $response ]]; then
+        REPLY=''
+        return 1
+    fi
+
+    REPLY=$response
 }
 
 _sc_get_selected_entry() {
-    local reply
-    reply=$(_scctl selected) || return 1
-    [[ -n $reply ]] || return 1
-    REPLY=$reply
+    _scctl selected && [[ -n $REPLY ]]
 }
 
 _sc_update_prompt() {
-    local prefix='' reply=$(_scctl preprompt "$_sc_prompt_padding")
-    reply=${reply:-0}
-    repeat $reply; do prefix+=$'\n'; done
-    _sc_prompt_padding=$reply
+    local prefix=''
+    _scctl preprompt "$_sc_prompt_padding" || REPLY=0
+    repeat $REPLY; do prefix+=$'\n'; done
+    _sc_prompt_padding=$REPLY
     PROMPT="${prefix}${_sc_prompt_base}"
 }
 
@@ -100,7 +129,7 @@ _sc_cd() {
 }
 
 _sc_switch_panel() {
-    _sc_cd "$(_scctl focused_cwd)"
+    _scctl focused_cwd && _sc_cd "$REPLY"
 }
 
 _sc_cd_parent() {

@@ -27,7 +27,7 @@ make
 ./.build/sc
 ```
 
-To install `sc`, its zsh integration, and the `scctl` helper, run:
+To install `sc` and its zsh integration, run:
 
 ```sh
 make install

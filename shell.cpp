@@ -96,11 +96,6 @@ void Shell::setup_zsh_environment()
       || !S_ISREG(st.st_mode) || ::access(sczsh_path.c_str(), R_OK) != 0 )
         die("sc.zsh is not a readable regular file: %s\n", sczsh_path.c_str());
 
-    const std::string scctl_path = std::string(sc_dir) + "/scctl";
-    if ( struct stat st; ::stat(scctl_path.c_str(), &st) != 0
-      || !S_ISREG(st.st_mode) || ::access(scctl_path.c_str(), X_OK) != 0 )
-        die("scctl is not an executable regular file: %s\n", scctl_path.c_str());
-
     // Drop a one-line pass-through .zshenv into the runtime directory. sc.zsh itself
     // restores the user's ZDOTDIR and defers adapter installation until the first prompt.
     const size_t dir_length = std::strlen(m_runtime_dir);
@@ -124,8 +119,6 @@ void Shell::setup_zsh_environment()
     else
         ::unsetenv("SC_USER_ZDOTDIR");
     ::setenv("ZDOTDIR", m_runtime_dir, 1);
-
-    ::setenv("SCCTL", scctl_path.c_str(), 1);
 }
 
 void Shell::init(int pty_fd, pid_t shell_pid)
@@ -173,19 +166,19 @@ void Shell::service_ipc()
     const int client = ::accept4(m_ipc_fd, nullptr, nullptr, SOCK_CLOEXEC);
     if ( client < 0 ) return;
 
-    char request[32];
+    char request[64];
     std::string reply;
     if ( const ssize_t n = ::read(client, request, sizeof(request) - 1); n > 0 ) {
         request[n] = '\0';
         if ( std::strcmp(request, "selected\n") == 0 ) {
             assert( m_preprompt_requested );
             if ( const auto entry = Comm::selected_entry() )
-                reply = std::string(*entry) + "\n";
+                reply = *entry;
         }
 
         else if ( std::strcmp(request, "focused_cwd\n") == 0 ) {
             assert( m_preprompt_requested );
-            reply = std::string(Comm::focused_cwd()) + "\n";
+            reply = Comm::focused_cwd();
         }
 
         else if ( std::strncmp(request, "preprompt ", 10) == 0
@@ -198,7 +191,7 @@ void Shell::service_ipc()
                 // A preprompt transaction refreshes panel data before calculating
                 // placement from the terminal's prompt cursor.
                 Comm::reload_panels(get_cwd(), !m_preprompt_requested);
-                reply = std::to_string(Comm::adjust_padding(applied_padding)) + "\n";
+                reply = std::to_string(Comm::adjust_padding(applied_padding));
                 m_preprompt_requested = true;
             }
         }

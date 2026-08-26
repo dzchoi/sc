@@ -9,18 +9,16 @@ include config.mk
 # libstdc++ is pulled in automatically.
 BUILDDIR = .build
 BIN		= sc
-CTL		= scctl
 SRC_C   = st.c x.c
 SRC_CPP = comm.cpp panel.cpp canvas.cpp shell.cpp
 OBJ     = $(SRC_C:%.c=$(BUILDDIR)/%.o) $(SRC_CPP:%.cpp=$(BUILDDIR)/%.o)
 
 CC      ?= gcc
 CXX     ?= g++
-CFLAGS  = -O2
 STRIP   ?= strip
 STCXXFLAGS = $(STCFLAGS) -std=c++17 -fno-exceptions -fno-rtti
 
-all: $(BUILDDIR)/$(BIN) $(BUILDDIR)/$(CTL) $(BUILDDIR)/sc.zsh
+all: $(BUILDDIR)/$(BIN) $(BUILDDIR)/sc.zsh
 
 config.h:
 	cp config.def.h config.h
@@ -47,10 +45,6 @@ $(BUILDDIR)/$(BIN): $(OBJ)
 	$(CXX) -o $@ $(OBJ) $(STLDFLAGS)
 	$(STRIP) $(BUILDDIR)/$(BIN)
 
-$(BUILDDIR)/$(CTL): scctl.c | $(BUILDDIR)
-	$(CC) $(CFLAGS) -o $@ $<
-	$(STRIP) $(BUILDDIR)/$(CTL)
-
 # sc.zsh must sit beside the sc binary; Shell::setup_zsh_environment() resolves it as
 # <exe_dir>/sc.zsh at runtime.
 $(BUILDDIR)/sc.zsh: sc.zsh | $(BUILDDIR)
@@ -63,17 +57,15 @@ dist: clean
 	mkdir -p st-$(VERSION)
 	cp -R FAQ LEGACY TODO LICENSE Makefile README config.mk\
 		config.def.h st.info st.1 arg.h st.h win.h comm_api.h panel.hpp comm.hpp shell.hpp canvas.hpp sc_config.hpp sc.zsh\
-		$(SRC_C) $(SRC_CPP) scctl.c\
+		$(SRC_C) $(SRC_CPP)\
 		st-$(VERSION)
 	tar -cf - st-$(VERSION) | gzip > st-$(VERSION).tar.gz
 	rm -rf st-$(VERSION)
 
-install: $(BUILDDIR)/$(BIN) $(BUILDDIR)/$(CTL)
+install: $(BUILDDIR)/$(BIN)
 	mkdir -p $(DESTDIR)$(PREFIX)/bin
 	cp -f $(BUILDDIR)/$(BIN) $(DESTDIR)$(PREFIX)/bin
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/$(BIN)
-	cp -f $(BUILDDIR)/$(CTL) $(DESTDIR)$(PREFIX)/bin/$(CTL)
-	chmod 755 $(DESTDIR)$(PREFIX)/bin/$(CTL)
 	cp -f sc.zsh $(DESTDIR)$(PREFIX)/bin/sc.zsh
 	chmod 644 $(DESTDIR)$(PREFIX)/bin/sc.zsh
 	mkdir -p $(DESTDIR)$(MANPREFIX)/man1
@@ -84,7 +76,6 @@ install: $(BUILDDIR)/$(BIN) $(BUILDDIR)/$(CTL)
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/$(BIN)
-	rm -f $(DESTDIR)$(PREFIX)/bin/$(CTL)
 	rm -f $(DESTDIR)$(PREFIX)/bin/sc.zsh
 	rm -f $(DESTDIR)$(MANPREFIX)/man1/st.1
 
