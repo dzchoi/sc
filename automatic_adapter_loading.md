@@ -8,8 +8,8 @@ handling begins:
 
 - the user's applicable zsh startup files have completed;
 - `sc.zsh` has installed its hooks, widgets, and private key bindings;
-- the first `preprompt` request has established both panels' authoritative cwd
-  and nonempty directory snapshots.
+- the first `preprompt` request has established both panels' authoritative directory
+  descriptors and nonempty snapshots.
 
 `Shell::init()` services startup PTY output and the private socket during a bounded
 wait. A valid first preprompt request is the sole readiness signal.
@@ -62,14 +62,10 @@ than allowing a partially integrated shell.
 ## Environment boundary
 
 After the shim has identified an interactive SC shell, `SC_SOCKET` becomes a
-non-exported global parameter. The adapter loads `zsh/net/socket` and `zsh/system`,
-then performs each transaction entirely through shell builtins. `_scctl` opens a fresh
-connection, writes one request, reads its nonempty response through EOF, and places the
-response in `REPLY` before closing the descriptor.
-
-Ordinary child processes and nested shells therefore cannot accidentally attach to the
-outer panel. Runtime actions use fixed private ZLE events; SC never constructs or
-injects arbitrary shell-language commands through the PTY.
+non-exported global parameter, so ordinary child processes and nested shells cannot
+attach to the outer panel accidentally. Runtime request framing, private ZLE events,
+and prompt synchronization are documented in
+[SC zsh shell integration](shell_integration.md).
 
 ## Resource ownership and recovery
 

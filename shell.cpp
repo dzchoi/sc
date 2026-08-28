@@ -9,10 +9,11 @@
 #include <cstdlib>              // for std::getenv(), mkdtemp(), setenv()
 #include <cstring>              // for std::memcpy(), std::strcmp(), ...
 #include <cstdio>               // for std::snprintf()
+#include <string>               // for std::string, std::to_string()
 #include <dirent.h>             // for opendir(), readdir(), closedir()
+#include <fcntl.h>              // for open(), O_*
 #include <limits.h>             // for PATH_MAX
 #include <poll.h>               // for poll(), pollfd, POLLIN, ...
-#include <string>               // for std::string, std::to_string()
 #include <sys/socket.h>         // for accept4(), bind(), listen(), socket()
 #include <sys/stat.h>           // for chmod()
 #include <unistd.h>             // for close(), getpid(), readlink(), ...
@@ -82,10 +83,10 @@ void Shell::setup_zsh_environment()
 {
     char sc_dir[PATH_MAX];
     const ssize_t n = ::readlink("/proc/self/exe", sc_dir, sizeof(sc_dir) - 1);
-    if ( n <= 0 )
-        die("readlink(/proc/self/exe) failed: %s\n", std::strerror(errno));
-    if ( static_cast<size_t>(n) == sizeof(sc_dir) - 1 )
-        die("SC directory exceeds PATH_MAX\n");
+    if ( n <= 0 || static_cast<size_t>(n) == sizeof(sc_dir) - 1 ) {
+        die("readlink(/proc/self/exe) failed: %s\n",
+            n < 0 ? std::strerror(errno) : n == 0 ? "empty path" : "path too long");
+    }
     sc_dir[n] = '\0';
 
     // Linux exposes /proc/self/exe as an absolute path.
@@ -176,9 +177,9 @@ void Shell::service_ipc()
                 reply = *entry;
         }
 
-        else if ( std::strcmp(request, "focused_cwd\n") == 0 ) {
+        else if ( std::strcmp(request, "focused_directory\n") == 0 ) {
             assert( m_preprompt_requested );
-            reply = Comm::focused_cwd();
+            reply = Comm::focused_directory();
         }
 
         else if ( std::strncmp(request, "preprompt ", 10) == 0
@@ -190,7 +191,7 @@ void Shell::service_ipc()
             if ( result.ec == std::errc{} && result.ptr == last && applied_padding >= 0 ) {
                 // A preprompt transaction refreshes panel data before calculating
                 // placement from the terminal's prompt cursor.
-                Comm::reload_panels(get_cwd(), !m_preprompt_requested);
+                Comm::reload_panels(!m_preprompt_requested);
                 reply = std::to_string(Comm::adjust_padding(applied_padding));
                 m_preprompt_requested = true;
             }
@@ -268,17 +269,28 @@ void Shell::cleanup_stale(const char* base)
     ::closedir(dir);
 }
 
-std::string Shell::get_cwd() const
+PanelDirectory Shell::capture_cwd() const
 {
     char proc[32];
     std::snprintf(proc, sizeof(proc), "/proc/%d/cwd", static_cast<int>(m_shell_pid));
+    const int fd = ::open(proc, O_PATH | O_DIRECTORY | O_CLOEXEC);
+    if ( fd < 0 )
+        die("open shell cwd failed: %s\n", std::strerror(errno));
+
+    char fd_proc[32];
+    std::snprintf(fd_proc, sizeof(fd_proc), "/proc/self/fd/%d", fd);
     char path[PATH_MAX];
-    const ssize_t n = ::readlink(proc, path, sizeof(path) - 1);
-    if ( n <= 0 )
-        die("read shell cwd failed: %s\n", n < 0 ? std::strerror(errno) : "empty path");
+    const ssize_t n = ::readlink(fd_proc, path, sizeof(path) - 1);
+    if ( n <= 0 || static_cast<size_t>(n) == sizeof(path) - 1 ) {
+        const int error = errno;
+        ::close(fd);
+        die("read shell cwd failed: %s\n",
+            n < 0 ? std::strerror(error) : n == 0 ? "empty path" : "path too long");
+    }
+
     std::string cwd(path, n);
     if ( cwd.back() != '/' ) cwd.push_back('/');
-    return cwd;
+    return PanelDirectory{std::move(cwd), fd};
 }
 
 void Shell::send_event(ZleEvent event) const

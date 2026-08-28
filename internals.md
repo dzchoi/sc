@@ -1,4 +1,4 @@
-# Panel internals
+# SC internals
 
 ## Repository branches
 
@@ -25,6 +25,37 @@ git push --force-with-lease origin sc
 The fast-forward-only merge ensures `main` remains an exact upstream mirror. The
 rebase changes `sc` commit IDs, so its GitHub branch is updated with
 `--force-with-lease`, which refuses to overwrite an unexpected remote change.
+
+## Architecture map
+
+```text
+X11 events and PTY output
+          │
+          ▼
+       st.c / x.c ───── terminal grid, cursor, and frame scheduling
+          │
+          ▼
+         Comm ───────── focus, visibility, layout, and subsystem coordination
+        /    \
+       ▼      ▼
+    Panel    Shell ════ control socket and fixed ZLE events ════ sc.zsh
+  directory                                                   cwd, buffer,
+  and canvas                                               commands, and prompt
+```
+
+The detailed technical documents each own one subsystem or lifecycle:
+
+- [Automatic zsh adapter loading](automatic_adapter_loading.md): startup injection,
+  readiness, runtime assets, and cleanup.
+- [SC zsh shell integration](shell_integration.md): runtime IPC, ZLE widgets, command
+  boundaries, and prompt synchronization.
+- [FD-backed panel directories](fd_backed_panel_directories.md): directory identity,
+  descriptor ownership, reloads, panel switching, and deleted-directory recovery.
+- [Window resizing](window_resizing.md): X11 geometry, terminal cells, unused pixels,
+  and PTY size propagation.
+
+This document retains the cross-subsystem architecture, rendering invariants, and
+decisions that do not belong to one of those topics.
 
 ## Frame lifecycle
 
@@ -61,70 +92,29 @@ PTY output, and otherwise blocks at idle. Consequently, polling is frame-driven,
 per-byte. Prompt-refresh deadlines are the exception: `panel_adjust_timeout()` folds a
 pending resize deadline into `pselect()` so the loop wakes even while otherwise idle.
 
-## State and control flow
+## Cross-subsystem control flow
 
-`Shell::preinit()` is the pre-fork boundary for the control socket and zsh bootstrap. It
-creates one owner-only runtime directory containing `control` and a generated `.zshenv`,
-validates the adjacent `sc.zsh`, and points the child shell's `ZDOTDIR` at
-the generated shim. `sc.zsh` restores the user's original `ZDOTDIR`, sources the user's
-effective `.zshenv`, and registers a one-shot precmd bootstrap. The bootstrap runs after
-the remaining startup files, captures their prompt, installs the adapter, and sends the
-first preprompt request. `Shell::init()` services both PTY output and IPC until that
-request establishes both panel snapshots. Normal panel polling and input handling begin
-only after it completes.
+The first successful `preprompt` request is the initialization boundary: the Zsh
+adapter is ready, both panels own valid directory descriptors, and both snapshots are
+nonempty. Normal panel polling and input handling begin only afterward.
 
-After bootstrap, `SC_SOCKET` remains available only as a non-exported shell parameter,
-so ordinary child commands and nested shells cannot inherit access to the outer panel.
-`_scctl` uses zsh builtins to open one connection per transaction and returns its reply
-through `REPLY`, avoiding both an external helper and command substitution.
+At runtime, `Comm` routes global keys before `Panel` sees pane-local selection keys.
+Shell-dependent actions cross the PTY as fixed ZLE events; Zsh then uses the private
+control socket for data and acknowledgements. A successful `preprompt` reconciles the
+focused panel and prompt padding synchronously, which prevents ordering dependencies
+between the PTY and socket channels.
 
-The first preprompt establishes `m_cwd` and `m_entries` together for both panels;
-`Shell::m_preprompt_requested` makes `Comm::reload_panels()` initialize both panels
-until the first preprompt completes. Beyond that boundary, each `m_cwd` is
-slash-terminated and each `m_entries` is nonempty because `load_entries()` always
-inserts synthetic `..`.
-The focused panel follows the shell cwd while the inactive panel retains its own
-directory. Tab changes focus in dual mode and sends a ZLE event that changes the shell
-cwd to the newly focused panel before refreshing its snapshot.
-`Shell::get_cwd()`
-reads the shell directory through `/proc/<shell-pid>/cwd`. If that directory has been
-unlinked, Linux returns a path marked `(deleted)` that cannot be reopened by name;
-`load_entries()` retains the synthetic `..` recovery entry so the shell can leave it.
-Names returned by `readdir()` remain in the snapshot when `lstat()` fails; their cached
-type, size, and mtime stay at non-directory/zero defaults. Cached type controls only
-presentation; Zsh validates the selected live path before directory navigation.
+Ctrl+O is handled before effective visibility so it can restore hidden panels. `x.c`
+removes lock modifiers before dispatch, preserving shortcuts under Caps Lock and Num
+Lock. `Panel` redraws immediately for selection input only when the selection changes;
+layout, focus, and visibility changes remain coordinator operations.
 
-Reloading preserves selection by absolute entry path after sorting the new snapshot.
-On a cwd change, the previous cwd is the candidate path to restore; ascending to its
-direct parent therefore selects the directory just left, while descending keeps the
-synthetic `..` index-zero default. On a same-cwd reload, the selected entry's absolute
-path is restored when it remains. Reloading retains the viewport; `render()` moves it
-only when needed to keep the restored selection visible.
+`Comm` owns focus, layout, forced visibility, and the resize-refresh deadline. `Panel`
+owns its descriptor-backed directory state, entries, selection, geometry, and cached
+canvas. `Shell` owns the managed-shell IPC boundary. Zsh remains authoritative for its
+cwd, editable buffer, command execution, and prompt.
 
-`preprompt <applied_padding>` is the synchronous prompt boundary. It reads the
-shell cwd, reconciles the focused panel's cwd, reloads its entries even when the cwd is
-unchanged, and finally computes prompt padding. Current widget paths use preprompt after
-successful actions and send no request after failures.
-
-The terminal owns the cursor. `Comm::adjust_padding()` reads it on demand through
-`tgetcursor()` instead of keeping a copied cursor row
-synchronized after every PTY write. The panel needs only the row, but the terminal
-accessor returns both coordinates for a symmetric C interface.
-The Zsh adapter normalizes a failed preprompt transaction to zero padding, so loss of
-the control path falls back to the base prompt. Successful replies are trusted because
-the private server validates the request and emits a non-negative integer.
-
-`Panel` handles only keys that move its selection and draws immediately only after the
-selection actually changes. `Comm` handles forced visibility, focus, layout, and
-shell-event keys before delegating pane-local movement to the focused panel. Ctrl+O is
-handled before effective visibility so it can restore hidden panels. Ctrl+P switches
-between single and dual layout without changing focus; Tab changes focus only in dual
-layout and dirties both cached selectors. `x.c` removes lock modifiers before this
-dispatch, preserving shortcut behavior with Caps Lock and Num Lock. Resizing schedules
-one coordinator-owned debounced prompt refresh; the deadline uses a monotonic clock and
-refreshes the prompt after geometry settles.
-
-## Lifecycle traps
+## Rendering lifecycle traps
 
 - `term.dirty` is valid for deciding whether to re-present the overlays only before
   `drawregion()` clears it. Preserve the shared decision in `Comm` for `panel_draw()`.
@@ -141,61 +131,16 @@ refreshes the prompt after geometry settles.
   trap but is more expensive.
 - The panels' shared covered row range is the smallest correct invalidation for normal
   visibility changes. Full-terminal invalidation is reserved for terminal-wide changes.
-- `preprompt` cursor arithmetic is valid only when its argument accounts for all
-  rows between the unpadded prompt origin and the terminal cursor. The Zsh adapter adds
-  the current `BUFFERLINES` before `zle -I` so multiline and wrapped edit buffers are
-  included. A successful command that leaves primary-screen output still makes the
-  cursor an output boundary rather than the active prompt boundary.
-- Assigning `PROMPT` does not re-expand ZLE's active prompt. A failed widget currently
-  clears `_sc_prompt_padding` and `PROMPT`, while Zsh redraws the prompt representation
-  that was expanded before the widget. A later in-place refresh can therefore report
-  zero even though the active display still contains SC-owned padding.
-- Preserve the unset-versus-empty state of the user's `ZDOTDIR`. Zsh treats an empty
-  value as the root directory rather than applying its `$HOME` fallback.
-- Reject a configured `XDG_RUNTIME_DIR` unless it is absolute. An unset variable may
-  fall back to `/tmp`, but an empty or relative value violates the XDG boundary rather
-  than describing an unavailable runtime directory.
-- Stale runtime cleanup removes only an exact-length `sc-XXXXXX` entry whose existing
-  control socket returns `ECONNREFUSED`. This means no listener existed at probe time;
-  another SC between `bind()` and `listen()` can briefly produce the same result. In
-  particular, `ENOENT` may identify a live SC between `mkdtemp()` and `bind()` and must
-  not trigger removal.
 
 ## Decisions
 
-- `Comm` owns effective overlay eligibility, focus, single/dual and hidden state, shared
-  row invalidation, shell integration, and the delayed prompt-refresh deadline. Each
-  `Panel` owns only pane-local geometry, directory data, selection, and cached rendering
-  state. `st.c` owns terminal storage and rendering order; it supplies `term.dirty` at
-  the frame boundary rather than exposing terminal globals.
+- Keep overlay coordination in `Comm` so `Panel` remains pane-local and `st.c` can
+  expose frame-boundary state without exposing terminal storage.
 - Keep C ABI functions thin. They delegate global lifecycle transitions to static
   `Comm`; terminal callbacks needed by the coordinator (`draw`, `tgetcursor`) are
   declared by the terminal interface rather than mirrored in panel state.
-- Expose only the focused panel's selected entry name outside `Comm`. Zsh checks the
-  path's current type immediately before acting instead of treating cached panel
-  metadata as the execution authority.
-- Keep `SC_USER_COMMANDS` values as argument-vector templates. The Zsh adapter replaces
-  a standalone `{}` with the selected absolute path, or appends that path when the
-  placeholder is absent, then invokes the vector directly without evaluating shell
-  code.
-- Keep directory reconciliation, entry reload, and padding calculation in the
-  synchronous `preprompt` transaction. Frame polling remains responsible only for
-  presentation state.
-- Keep one control-socket connection per request and use EOF as the response boundary.
-  `_scctl` returns the response through `REPLY`, so this retains unambiguous framing for
-  paths containing newlines without paying process-creation or command-substitution
-  costs or introducing persistent-connection recovery state.
-- Treat the first successful preprompt request as shell readiness. `Shell::init()` services
-  startup PTY and IPC activity until that request completes and initializes both panel
-  snapshots, so later panel methods can rely on cwd and entry invariants without
-  readiness checks.
-- Use one generated `.zshenv` rather than proxies for every user startup stage. Once the
-  shim restores the user's effective `ZDOTDIR` and sources `.zshenv`, zsh's normal
-  startup logic preserves later file selection and ordering. Defer adapter installation
-  to the first precmd so `.zshrc` prompt and command-map configuration is complete.
-- Resolve `sc.zsh` beside `/proc/self/exe` for both build and installed layouts. This
-  keeps runtime discovery independent of `PATH`; the Makefile creates the development
-  symlink and installs both runtime files together.
+- Keep frame polling responsible only for presentation. Shell reconciliation and prompt
+  placement remain synchronous command-boundary work.
 - Keep focus non-null and represent forced hiding independently. This preserves the
   active pane across Ctrl+O without a second saved focus pointer. Single/dual mode is
   likewise independent, so Ctrl+P changes layout without changing the active directory.
@@ -219,6 +164,7 @@ refreshes the prompt after geometry settles.
   - Title adds a space at the front and end of it like NC does.
   - Inactive panel's title should not be highlighted like NC does.
   - Use '~' instead of '/home/stem' in the title.
+  - Appended type markers (e.g., /, @) to entries be displayed in dark text.
   - It has an ugly default application icon now.
   - Handle Symlinks and consider permissions.
   - Hangul typing shows the unnecessary combination box.

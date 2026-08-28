@@ -2,20 +2,74 @@
 
 #include <algorithm>            // for std::find_if(), std::sort()
 #include <cassert>              // for assert()
+#include <cerrno>               // for errno
 #include <cstdint>              // for uint32_t
 #include <cstring>              // for std::strcmp(), std::memset()
 #include <ctime>                // for localtime_r(), std::strftime()
 #include <string>               // for std::string, std::to_string(), ...
 #include <utility>              // for std::move(), std::pair()
 
-#include <dirent.h>             // for DIR, opendir(), ...
-#include <sys/stat.h>           // for struct stat, lstat(), ...
+#include <dirent.h>             // for DIR, fdopendir(), readdir(), closedir()
+#include <fcntl.h>              // for openat(), O_*, AT_SYMLINK_NOFOLLOW
+#include <sys/stat.h>           // for struct stat, fstat(), fstatat()
 #include <sys/types.h>          // for off_t, time_t
+#include <unistd.h>             // for close(), getpid()
 #include <X11/keysym.h>         // for XK_*
 
 #include "comm.hpp"             // for Comm
 #include "panel.hpp"            // for Panel
 #include "sc_config.hpp"        // for SC configuration constants
+
+
+
+PanelDirectory::PanelDirectory(std::string cwd, int fd)
+: m_cwd(std::move(cwd)), m_fd(fd)
+{
+    assert( m_fd >= 0 );
+    assert( !m_cwd.empty() && m_cwd.back() == '/' );
+}
+
+PanelDirectory::PanelDirectory(PanelDirectory&& other) noexcept
+: m_cwd(std::move(other.m_cwd)), m_fd(other.m_fd)
+{
+    other.m_fd = -1;
+}
+
+PanelDirectory& PanelDirectory::operator=(PanelDirectory&& other) noexcept
+{
+    if ( this == &other ) return *this;
+    if ( m_fd >= 0 ) ::close(m_fd);
+    m_cwd = std::move(other.m_cwd);
+    m_fd = other.m_fd;
+    other.m_fd = -1;
+    return *this;
+}
+
+PanelDirectory::~PanelDirectory()
+{
+    if ( m_fd >= 0 ) ::close(m_fd);
+}
+
+PanelDirectory PanelDirectory::duplicate() const
+{
+    const int fd = ::fcntl(m_fd, F_DUPFD_CLOEXEC, 0);
+    if ( fd < 0 )
+        die("duplicate initial panel directory failed: %s\n", std::strerror(errno));
+    return PanelDirectory{m_cwd, fd};
+}
+
+bool PanelDirectory::same_inode(const PanelDirectory& other) const
+{
+    struct stat mine{}, theirs{};
+    const bool success = ::fstat(m_fd, &mine) == 0 && ::fstat(other.m_fd, &theirs) == 0;
+    assert( success );
+    return mine.st_dev == theirs.st_dev && mine.st_ino == theirs.st_ino;
+}
+
+std::string PanelDirectory::proc_path() const
+{
+    return "/proc/" + std::to_string(::getpid()) + "/fd/" + std::to_string(m_fd);
+}
 
 
 
@@ -126,7 +180,8 @@ void Panel::render()
             .move(column.date_x - 1).put(kFrameTT)
             .move(column.time_x - 1).put(kFrameTT)
             .move(width - 1).put(kFrameTR)
-            .move(1).mid(width - 2).ellipsize(Draw::Keep::Right).put(m_cwd, ATTR_REVERSE);
+            .move(1).mid(width - 2).ellipsize(Draw::Keep::Right)
+                .put(cwd(), ATTR_REVERSE);
 
         // --- Row 1: column headers ---
         draw.move(0, 1).color(kFgFrame, bg).fill(' ')
@@ -251,20 +306,26 @@ void Panel::load_entries(std::string_view prev_path)
 
     // Manually add ".." as the first entry in case the filesystem's readdir() does not
     // enumerate it.
-    m_entries.emplace_back("..", true, 0, -1); // mtime == -1 shows empty Date and Time.
+    m_entries.emplace_back("..", true, 0, -1);  // mtime == -1 shows empty Date and Time.
 
-    if ( DIR* dir = ::opendir(m_cwd.c_str()) ) {
-        while ( auto* dirent = ::readdir(dir) ) {
-            if ( std::strcmp(dirent->d_name, ".")  == 0 ) continue;
-            if ( std::strcmp(dirent->d_name, "..") == 0 ) continue;
-            const std::string entry_path = m_cwd + dirent->d_name;
-            struct stat st;
-            if ( ::lstat(entry_path.c_str(), &st) != 0 )
-                std::memset(&st, 0, sizeof(st));
-            m_entries.emplace_back(dirent->d_name, S_ISDIR(st.st_mode), st.st_size,
-                st.st_mtime);
+    const int scan_fd = ::openat(m_directory.fd(), ".",
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if ( scan_fd >= 0 ) {
+        if ( DIR* dir = ::fdopendir(scan_fd) ) {
+            while ( auto* dirent = ::readdir(dir) ) {
+                if ( std::strcmp(dirent->d_name, ".")  == 0 ) continue;
+                if ( std::strcmp(dirent->d_name, "..") == 0 ) continue;
+                struct stat st;
+                if ( ::fstatat(m_directory.fd(), dirent->d_name, &st,
+                        AT_SYMLINK_NOFOLLOW) != 0 )
+                    std::memset(&st, 0, sizeof(st));
+                m_entries.emplace_back(dirent->d_name, S_ISDIR(st.st_mode), st.st_size,
+                    st.st_mtime);
+            }
+            ::closedir(dir);  // closes both dir and scan_fd.
         }
-        ::closedir(dir);
+        else
+            ::close(scan_fd);
     }
 
     // ".." is already first; order the remaining snapshot as directories, then files.
@@ -274,9 +335,9 @@ void Panel::load_entries(std::string_view prev_path)
             return a.name < b.name;
         });
 
-    // A missing slash yields name_pos == 0, which cannot match nonempty m_cwd.
+    // A missing slash yields name_pos == 0, which cannot match nonempty cwd().
     const size_t name_pos = prev_path.rfind('/') + 1;
-    if ( m_cwd.size() == name_pos && prev_path.substr(0, name_pos) == m_cwd ) {
+    if ( cwd().size() == name_pos && prev_path.substr(0, name_pos) == cwd() ) {
         const std::string_view prev_name = prev_path.substr(name_pos);
         const auto it = std::find_if(m_entries.begin() + 1, m_entries.end(),
             [&](const Entry& entry) { return entry.name == prev_name; });
@@ -289,23 +350,32 @@ void Panel::load_entries(std::string_view prev_path)
     m_dirty = true;
 }
 
-void Panel::reload(std::string cwd)
+void Panel::init(PanelDirectory directory)
 {
+    assert( !m_directory.valid() && directory.valid() );
+    m_directory = std::move(directory);
+    load_entries({});
+}
+
+void Panel::reload(PanelDirectory directory)
+{
+    assert( m_directory.valid() && directory.valid() );
+    const bool directory_changed = !m_directory.same_inode(directory);
     std::string prev_path;
-    if ( cwd != m_cwd ) {
+    if ( directory_changed ) {
         // Preserve the directory being left when its absolute path names an ordinary
         // entry in the new cwd. Descending retains the index-zero ".." default.
-        // Root cannot be an ordinary entry; other cwd paths omit their trailing slash.
-        if ( m_cwd.size() > 1 ) {
-            prev_path = m_cwd;
+        // Root (/) cannot be an ordinary entry; other cwd paths omit their trailing /.
+        if ( cwd().size() > 1 ) {
+            prev_path = cwd();
             prev_path.pop_back();
         }
-        m_cwd = std::move(cwd);
         m_selected_idx = 0;
     }
-    else {
-        prev_path = m_cwd + m_entries[m_selected_idx].name;
-    }
+    else
+        prev_path = std::string(directory.cwd()) + m_entries[m_selected_idx].name;
+
+    m_directory = std::move(directory);
     load_entries(prev_path);
 }
 

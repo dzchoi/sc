@@ -11,8 +11,8 @@
 #include <string>               // for std::string
 #include <string_view>          // for std::string_view
 
-#include "panel.hpp"           // for Panel
-#include "shell.hpp"           // for Shell, ZleEvent
+#include "panel.hpp"            // for Panel
+#include "shell.hpp"            // for Shell, ZleEvent
 
 
 
@@ -34,12 +34,14 @@ public:
     // Sends one fixed control event to the managed shell's ZLE input stream.
     static void shell_send_event(ZleEvent event) { m_shell.send_event(event); }
 
-    // Initializes both snapshots for init, then reloads only the focused panel.
-    static void reload_panels(std::string cwd, bool init);
+    // Captures the shell directory, initializes both panels on `init`, then reloads
+    // only the focused panel at later boundaries.
+    static void reload_panels(bool init);
     // Returns the focused selection only while a panel is effectively visible.
     static std::optional<std::string_view> selected_entry();
-    // Returns the focused panel's retained, slash-terminated cwd.
-    static std::string_view focused_cwd() { return m_focus->cwd(); }
+    // Returns a procfs path ("/proc/<sc-pid>/fd/<panel-fd>") that resolves to the
+    // focused panel's pinned directory.
+    static std::string focused_directory() { return m_focus->directory_proc_path(); }
     // Computes prompt padding from the focused canvas and terminal cursor.
     static int adjust_padding(int applied_padding);
 

@@ -5,12 +5,42 @@
 #include <cassert>              // for assert()
 #include <string>               // for std::string
 #include <string_view>          // for std::string_view
-#include <sys/types.h>          // for off_t, time_t
 #include <utility>              // for std::move()
 #include <vector>               // for std::vector<>
+#include <sys/types.h>          // for off_t, time_t
 
 #include "canvas.hpp"           // for Canvas, Draw
 #include "sc_config.hpp"        // for SC configuration constants
+
+
+
+// Move-only handle and display name for one panel directory. The descriptor pins the
+// directory inode; m_cwd is only its current, user-facing name from procfs.
+class PanelDirectory {
+public:
+    PanelDirectory() =default;
+    PanelDirectory(std::string cwd, int fd);
+    PanelDirectory(const PanelDirectory&) =delete;
+    PanelDirectory& operator=(const PanelDirectory&) =delete;
+    PanelDirectory(PanelDirectory&& other) noexcept;
+    PanelDirectory& operator=(PanelDirectory&& other) noexcept;
+    ~PanelDirectory();
+
+    bool valid() const { return m_fd >= 0; }
+    int fd() const { return m_fd; }
+    std::string_view cwd() const { return m_cwd; }
+
+    // Returns another descriptor for the same inode, or terminates SC on failure.
+    PanelDirectory duplicate() const;
+    // Returns whether both initialized handles identify the same directory inode.
+    bool same_inode(const PanelDirectory& other) const;
+    // Returns "/proc/<sc-pid>/fd/<fd>", which resolves to this retained directory.
+    std::string proc_path() const;
+
+private:
+    std::string m_cwd;
+    int m_fd = -1;
+};
 
 
 
@@ -31,17 +61,20 @@ public:
     Panel() =default;
     Panel(const Panel&) =delete;
     Panel& operator=(const Panel&) =delete;
-    Panel(Panel&&) =default;
-    Panel& operator=(Panel&&) =default;
+    Panel(Panel&&) =delete;
+    Panel& operator=(Panel&&) =delete;
 
     // Canvas geometry and backing storage used to present this panel.
     const Canvas& canvas() const { return m_canvas; }
 
-    std::string_view cwd() const { return m_cwd; }
+    std::string_view cwd() const { return m_directory.cwd(); }
+    std::string directory_proc_path() const { return m_directory.proc_path(); }
 
     // Comm supplies disjoint horizontal ranges and guarantees that both panels receive
     // the same top and height. Shared vertical geometry lets Comm invalidate and test
     // their covered terminal rows once per frame.
+    // Note that set_geometry() can be called before init(); tnew() calls panel_resize()
+    // before ttynew() starts the shell and receives the first preprompt.
     void set_geometry(int top, int left, int width, int height, int term_cols);
 
     // Records effective visibility and returns {visibility changed, needs render}.
@@ -58,9 +91,12 @@ public:
     // Rebuilds dirty content, then presents the visible canvas.
     void render();
 
-    // Reconciles the shell cwd and rebuilds its directory snapshot without consulting
+    // Establishes the panel directory and first nonempty snapshot at the first preprompt.
+    void init(PanelDirectory directory);
+
+    // Replaces the initialized directory and rebuilds its snapshot without consulting
     // terminal prompt state.
-    void reload(std::string cwd);
+    void reload(PanelDirectory directory);
 
     // Handles input after Comm has established that the focused panel is visible.
     bool handle_key(unsigned long ksym);
@@ -72,7 +108,9 @@ private:
     bool m_visible = false;  // effective visibility captured by set_visible()
     bool m_dirty = false;   // true: render() rebuilds m_canvas's buffer before next draw.
 
-    std::string m_cwd;  // empty before initialization; otherwise always ends with '/'
+    // Invalid before init(); afterward owns a descriptor that pins the directory inode
+    // and a slash-terminated display path.
+    PanelDirectory m_directory;
     // Empty before initialization; afterward always contains at least synthetic "..".
     std::vector<Entry> m_entries;
     int m_selected_idx = 0;        // index into m_entries of the highlighted row
@@ -102,7 +140,7 @@ private:
         assert( column.name_w > 0 );
     }
 
-    // Rebuilds m_entries[] from m_cwd and re-seats m_selected_idx when the absolute,
+    // Rebuilds m_entries[] from cwd() and re-seats m_selected_idx when the absolute,
     // non-slash-terminated prev_path names an ordinary entry in the new snapshot.
     void load_entries(std::string_view prev_path);
 };

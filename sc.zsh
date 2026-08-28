@@ -124,12 +124,12 @@ _sc_cd() {
     # Total line count of the current command line (== 0 usually).
     local -i prompt_lines=$BUFFERLINES
     zle -I && (( _sc_prompt_padding += prompt_lines ))
-    builtin cd -- "$1"
+    builtin cd ${2:+"$2"} -- "$1"
     _sc_refresh_prompt
 }
 
 _sc_switch_panel() {
-    _scctl focused_cwd && _sc_cd "$REPLY"
+    _scctl focused_directory && _sc_cd "$REPLY" -P
 }
 
 _sc_cd_parent() {

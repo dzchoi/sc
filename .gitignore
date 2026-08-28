@@ -1,3 +1,5 @@
+AGENTS.md
+commit.txt
 config.h
 *.o
 /.build

@@ -8,7 +8,7 @@
 #include <sys/un.h>             // for sockaddr_un
 #include <unistd.h>             // for tcgetpgrp()
 
-#include <string>               // for std::string
+#include "panel.hpp"            // for PanelDirectory
 
 
 
@@ -33,7 +33,8 @@ public:
     void preinit();
 
     // Associates the shell with its PTY and services startup I/O until the first
-    // preprompt request has established both panel snapshots.
+    // preprompt request has established both panels' directory descriptors and
+    // snapshots.
     void init(int pty_fd, pid_t shell_pid);
 
     // The control socket watched by the main event loop.
@@ -49,9 +50,9 @@ public:
     // Whether the shell owns the PTY's foreground process group.
     bool owns_pty() const { return ::tcgetpgrp(m_pty_fd) == m_shell_pid; }
 
-    // Returns the shell's cwd via /proc/<shell-pid>/cwd, always ending with '/'. Failure
-    // terminates SC because a valid directory is required for the panel snapshot.
-    std::string get_cwd() const;
+    // Captures the shell cwd and a descriptor for that same directory through procfs.
+    // The cwd always ends with '/'; failure terminates SC because panels require both.
+    PanelDirectory capture_cwd() const;
 
     // Delivers a fixed SC control event to the shell's ZLE input stream.
     void send_event(ZleEvent event) const;
@@ -66,7 +67,7 @@ private:
     int m_ipc_fd = -1;
     int m_pty_fd = -1;
     pid_t m_shell_pid = 0;
-    // The first preprompt request establishes the initial panel snapshots.
+    // The first preprompt request establishes both panels' directory and snapshot state.
     bool m_preprompt_requested = false;
     char m_runtime_dir[sizeof(sockaddr_un{}.sun_path)]{};
     char m_zshenv_path[sizeof(sockaddr_un{}.sun_path)]{};

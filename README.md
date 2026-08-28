@@ -75,6 +75,11 @@ SC consumes only keys that apply to the current panel layout. Keys that are not
 applicable, such as `Tab` when only one panel is shown or `Up` when the panels
 are hidden, pass through to the shell and retain their normal shell behavior.
 
+Each panel retains its directory while SC is running. If a background command removes
+an inactive panel's directory, Tab still enters the unlinked Linux directory inode. The
+panel title marks it as deleted and retains `..`, allowing `cd ..` or `Ctrl+Page Up` to
+return to an existing ancestor.
+
 With an empty command line, `Enter` changes into a selected directory. For a
 selected file, it places the shell-quoted path on the command line and runs it.
 When a command is already being edited, `Enter` behaves normally and runs that

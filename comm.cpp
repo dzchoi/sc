@@ -3,17 +3,16 @@
 #include <algorithm>            // for std::any_of(), std::max()
 #include <cassert>              // for assert()
 #include <chrono>               // for std::chrono::steady_clock
-#include <string>               // for std::string
 #include <utility>              // for std::move()
 #include <X11/X.h>              // for ControlMask, ShiftMask, ...
 #include <X11/keysym.h>         // for XK_*
 
-#include "comm.hpp"            // for Comm
-#include "sc_config.hpp"       // for unlikely(), SC configuration constants
+#include "comm.hpp"             // for Comm
+#include "sc_config.hpp"        // for unlikely(), SC configuration constants
 
 extern "C" {
-#include "comm_api.h"          // for SC's terminal-facing C ABI
-#include "st.h"                // for draw(), tgetcursor()
+#include "comm_api.h"           // for SC's terminal-facing C ABI
+#include "st.h"                 // for draw(), tgetcursor()
 }
 
 
@@ -23,16 +22,20 @@ bool Comm::any_panel_visible()
     return !m_hidden && m_focus->canvas().height() > 0 && shell_owns_pty();
 }
 
-void Comm::reload_panels(std::string cwd, bool init)
+void Comm::reload_panels(bool init)
 {
-    // The first preprompt establishes both snapshots. Later prompt and command
-    // boundaries update only the focused panel, preserving the other panel's cwd.
+    PanelDirectory directory = m_shell.capture_cwd();
+
+    // The first preprompt establishes both panels' directory and snapshot invariants.
+    // Later boundaries update only the focused panel, preserving the inactive panel's
+    // complete directory state.
     if ( unlikely(init) ) {
-        m_left.reload(cwd);
-        m_right.reload(std::move(cwd));
+        PanelDirectory duplicate = directory.duplicate();
+        m_left.init(std::move(duplicate));
+        m_right.init(std::move(directory));
     }
     else {
-        m_focus->reload(std::move(cwd));
+        m_focus->reload(std::move(directory));
     }
 }
 

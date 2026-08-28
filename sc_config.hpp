@@ -32,8 +32,8 @@ constexpr int kFracWidth    = 2;   // panel takes half of terminal cols
 constexpr int kMinRows      = 12;  // minimum terminal rows to show the panel
 constexpr int kMinCols      = 80;  // minimum terminal cols to show the panel
 
-// The first preprompt request must establish the panel snapshot before Shell::init()
-// returns and normal input handling begins.
+// The first preprompt request must establish both panels' directory descriptors and
+// snapshots before Shell::init() returns and normal input handling begins.
 constexpr int kFirstPrepromptTimeoutMs = 1000;
 
 static_assert(kFracWidth == 2);
