@@ -129,6 +129,7 @@ _sc_cd() {
 }
 
 _sc_switch_panel() {
+    SC_OTHER_DIR=$PWD
     _scctl focused_directory && _sc_cd "$REPLY" -P
 }
 
@@ -218,6 +219,9 @@ _sc_bootstrap() {
 
     typeset -g _sc_prompt_base=$PROMPT
     typeset -g _sc_prompt_padding=0
+
+    # User environment variables
+    typeset -gx SC_OTHER_DIR=$PWD
 
     add-zsh-hook precmd _sc_precmd
 

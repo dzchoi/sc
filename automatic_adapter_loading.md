@@ -43,8 +43,7 @@ first synchronous preprompt transaction.
 
 `sc.zsh` accepts only the bootstrap source identified by `SC_ZSH_INIT`. A later manual
 source of the current adapter therefore becomes a no-op instead of reinstalling hooks
-or re-sourcing `.zshenv`. Upgrade instructions still require removing entries that name
-the former `<prefix>/share/sc/sc.zsh` path, which is no longer installed.
+or re-sourcing `.zshenv`.
 
 ## Asset layout and validation
 
