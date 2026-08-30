@@ -127,6 +127,9 @@ cwd, editable buffer, command execution, and prompt.
 
 ## Rendering lifecycle traps
 
+- `term.line` remains the live screen while `TLINE(y)` maps drawing and selection to
+  either live rows or retained history. The cursor and panel overlay are presented only
+  at the live scroll position, leaving the complete viewport available for history.
 - `term.dirty` is valid for deciding whether to re-present the overlays only before
   `drawregion()` clears it. Preserve the shared decision in `Comm` for `panel_draw()`.
 - Terminal dirtiness is row-granular. Collect both visibility transitions before
@@ -169,3 +172,6 @@ cwd, editable buffer, command execution, and prompt.
   scalable icon through the freedesktop locations. Application-oriented desktop shells
   use that identity to associate windows with the application, including through
   XWayland.
+- Restrict internal wheel scrollback shortcuts to the normal screen. Alternate-screen
+  applications retain their existing mouse reporting or terminal-input behavior, so
+  they scroll their own content without a modifier.
