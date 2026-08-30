@@ -15,11 +15,16 @@ width  = 2 * borderpx + cols * win.cw
 height = 2 * borderpx + rows * win.ch
 ```
 
-`xhints()` advertises that size together with `win.cw` and `win.ch` as the X11
-resize increments and `2 * borderpx` as the base size. These are hints to the
-window manager, not a requirement that it preserve the requested grid. A
-floating window manager may honor the request, while a tiling or maximizing
-window manager may assign the monitor's available client area instead.
+`xhints()` advertises that size together with resize increments and `2 * borderpx` as
+the base size. These are hints to the window manager, not a requirement that it preserve
+the requested grid. A floating window manager may honor the request, while a tiling or
+maximizing window manager may assign the monitor's available client area instead.
+
+[patch: anysize](https://st.suckless.org/patches/anysize/) changes the resize
+increments from the cell dimensions `win.cw` and `win.ch` to one pixel, allowing
+the window manager to fit the client exactly to a monitor's available area.
+Window managers such as Mutter can consequently restore the unconstrained
+geometry when the window moves to a monitor with more available space.
 
 Before starting normal event processing, `run()` records the latest
 `ConfigureNotify` dimensions received while the window is being mapped. Later
@@ -31,6 +36,18 @@ derives the grid with integer division:
 col = (win.w - 2 * borderpx) / win.cw
 row = (win.h - 2 * borderpx) / win.ch
 ```
+
+After choosing the grid, `cresize()` centers it by splitting the pixels outside
+the complete cells between the opposite borders:
+
+```text
+win.hborderpx = (win.w - col * win.cw) / 2
+win.vborderpx = (win.h - row * win.ch) / 2
+```
+
+Integer division gives the right or bottom border the extra pixel when the
+remainder is odd. Mouse coordinates, glyphs, cursors, and the input-method spot
+all use these dynamic offsets.
 
 Changing the configured `cols` or `rows` therefore changes the initial request,
 but it does not force that grid when the window manager assigns a different
@@ -48,11 +65,9 @@ win.th = row * win.ch
 
 The backing pixmap still has the full `win.w` by `win.h` dimensions and is
 cleared to the default background color. Consequently, pixels left by the
-integer divisions remain background-colored rather than becoming partial
-cells. With the unpatched st layout, the fixed border stays at the top and left,
-and any additional division remainder accumulates at the right and bottom.
-`xdrawglyphfontspecs()` also clears those outer regions when drawing the last
-terminal column or row.
+integer divisions become balanced, background-colored borders rather than
+partial cells. `xdrawglyphfontspecs()` also clears those outer regions when
+drawing the first or last terminal column or row.
 
 This is why a window can align exactly with a screen or tile boundary even when
 its pixel dimensions are not an exact multiple of the cell dimensions: the
