@@ -154,10 +154,10 @@ cwd, editable buffer, command execution, and prompt.
   active pane across Ctrl+O without a second saved focus pointer. Single/dual mode is
   likewise independent, so Ctrl+P changes layout without changing the active directory.
 - Keep alternate-screen startup behavior in terminfo rather than coupling it to the
-  panel or changing the upstream terminal parser. `smcup` enters mode 1049 and homes
-  the alternate-screen cursor; `rmcup` lets the terminal restore the shell cursor.
-  `make install` compiles `st.info` with `tic`, while `make` alone leaves the user's
-  installed terminfo database unchanged.
+  panel. `smcup` enters mode 1049, homes the alternate-screen cursor, and pushes the
+  window title; `rmcup` leaves the alternate screen and restores the title. `make
+  install` compiles `st.info` with `tic`, while `make` alone leaves the user's installed
+  terminfo database unchanged.
 - Keep panel and terminal text on the same occupied-cell width contract. `Canvas`
   distinguishes one- and two-cell runes and emits the wide-glyph and continuation
   attributes expected by the X renderer because panel glyphs bypass `tsetchar()`.
@@ -166,3 +166,7 @@ cwd, editable buffer, command execution, and prompt.
 - Restrict internal wheel scrollback shortcuts to the normal screen. Alternate-screen
   applications retain their existing mouse reporting or terminal-input behavior, so
   they scroll their own content without a modifier.
+- Keep the bounded title stack in the X11 layer that owns the window title. The CSI
+  parser accepts the standard title-stack selectors while applying them to the X11
+  window title, and terminal reset releases every saved title and restores the
+  configured default.
