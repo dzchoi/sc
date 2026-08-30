@@ -199,11 +199,17 @@ void Panel::render()
             .with_fg(kFgSelected, [](Draw& d){ d.put("Time", ATTR_BOLD); })
             .put(kFrameV);
 
-        // Keep cursor in view.
+        // Keep the selection in view.
         if ( m_selected_idx < m_first_visible_idx )
             m_first_visible_idx = m_selected_idx;
         if ( m_selected_idx >= m_first_visible_idx + list_rows )
             m_first_visible_idx = m_selected_idx - list_rows + 1;
+
+        // Avoid blank rows when enough entries exist to fill the viewport.
+        m_first_visible_idx = std::min(
+            m_first_visible_idx,
+            std::max(0, static_cast<int>(m_entries.size()) - list_rows));
+
         // --- Rows 2 .. height-4: entries ---
         for ( int i = 0 ; i < list_rows ; ++i ) {
             const int y = 2 + i;  // skip over the header.
@@ -377,6 +383,12 @@ void Panel::reload(PanelDirectory directory)
 
     m_directory = std::move(directory);
     load_entries(prev_path);
+
+    if ( directory_changed ) {
+        // Reposition the viewport so that selected entry is roughly centered.
+        const int list_rows = m_canvas.height() - kRowsPanelFrame;
+        m_first_visible_idx = std::max(0, m_selected_idx - list_rows / 2);
+    }
 }
 
 bool Panel::handle_key(unsigned long ksym)
