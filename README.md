@@ -49,8 +49,9 @@ unrestricted shell; the remaining scope is listed under [Current limitations](#c
 <sup>1</sup> Zsh is currently the only supported shell. Support for other shells,
 including bash, is being developed.
 
-<sup>2</sup> SC does not provide scrollback directly. It is available through the
-[st scrollback patch](https://st.suckless.org/patches/scrollback/).
+<sup>2</sup> The `sc` branch does not provide scrollback. The `sc-patched` branch adds
+it through the [patch: scrollback](https://st.suckless.org/patches/scrollback/) patch
+stack.
 
 ## Build and run
 
@@ -168,6 +169,19 @@ visible selected entry.
 | `F4` | Edit the selected entry with `vi` |
 | `Shift+F3` | Display the selected entry with `cat` |
 
+## Scrolling terminal output (`sc-patched`)
+
+This behavior is available only on the `sc-patched` branch. SC retains the latest
+2,000 lines of normal terminal output. Use `Shift+Page Up` and `Shift+Page Down` to
+move through it one screen at a time, or use the mouse wheel to move one line at a time
+without a modifier. The cursor and panels are hidden while viewing older output and
+return at the live screen. Sending input to the terminal also returns directly to the
+live screen.
+
+The mouse wheel does not enter SC's history while an alternate-screen application is
+active. Its wheel input is left to applications such as `less`, `vi`, and `tmux`, so
+their own content scrolls without holding `Shift`.
+
 ## Configuring function keys
 
 The `SC_USER_COMMANDS` associative array maps function-key sequences to commands for
@@ -234,15 +248,23 @@ next panel switch updates it.
   commands.
 - Mouse-based file management is not supported.
 
-## Community patches
+## Branches and st patches
 
-SC does not include patches from the [st patches collection](https://st.suckless.org/patches/).
-Users can apply them when needed. Two useful patches are:
+The `sc` branch contains SC's own features without community patches. The `sc-patched`
+branch additionally applies these patches from the
+[st patches collection](https://st.suckless.org/patches/):
 
-- [Boxdraw](https://st.suckless.org/patches/boxdraw/) renders panel lines as crisp
-  pixel primitives.
-- [CSI 22/23](https://st.suckless.org/patches/csi_22_23/) preserves a window title
-  changed temporarily by programs such as Neovim.
+- [patch: expected-anysize](https://st.suckless.org/patches/anysize/) lets window
+  managers fit SC exactly to the available display area.
+- [patch: scrollback](https://st.suckless.org/patches/scrollback/) provides the
+  [terminal history controls](#scrolling-terminal-output-sc-patched).
+- [patch: CSI 22/23](https://st.suckless.org/patches/csi_22_23/) uses an eight-entry
+  stack to preserve window titles changed temporarily by programs such as Neovim.
+  Installed SC terminfo entries save and restore the title around alternate-screen
+  applications.
+
+Other community patches, including
+[Boxdraw](https://st.suckless.org/patches/boxdraw/), are not included on either branch.
 
 ## License
 
