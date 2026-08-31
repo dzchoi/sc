@@ -94,11 +94,11 @@ upper-right part of the terminal, leaving the prompt and command line available 
 it. Press `Ctrl+P` to show both panels. Both begin in the starting directory, then
 remember their own directories and selections as you use them.
 
-The directory name appears in the panel title, highlighted only when that panel has
-focus. Entries are ordered with `..` first,
-then directories, then files; directories and files are sorted by name within their
-groups. The columns show the entry name, size or directory marker, modification date,
-and modification time. The panel footer shows details for the selected entry.
+The directory name appears in the panel title, with the user's home directory shown as
+`~`, and is highlighted only when that panel has focus. Entries are ordered with `..`
+first, then directories, then files; directories and files are sorted by name within
+their groups. The columns show the entry name, size or directory marker, modification
+date, and modification time. The panel footer shows details for the selected entry.
 
 Panels require a terminal at least 80 columns wide and 12 rows high. They disappear
 below that size and return when the terminal is large enough again.
@@ -255,8 +255,9 @@ The `sc` branch contains SC's own features without community patches. The `sc-pa
 branch additionally applies these patches from the
 [st patches collection](https://st.suckless.org/patches/):
 
-- [patch: expected-anysize](https://st.suckless.org/patches/anysize/) lets window
-  managers fit SC exactly to the available display area.
+- [patch: anysize](https://st.suckless.org/patches/anysize/) lets window managers
+  fit SC exactly to the available display area and centers the terminal grid within
+  balanced dynamic borders.
 - [patch: scrollback](https://st.suckless.org/patches/scrollback/) provides the
   [terminal history controls](#scrolling-terminal-output-sc-patched).
 - [patch: CSI 22/23](https://st.suckless.org/patches/csi_22_23/) uses an eight-entry

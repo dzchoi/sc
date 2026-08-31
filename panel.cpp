@@ -4,7 +4,8 @@
 #include <cassert>              // for assert()
 #include <cerrno>               // for errno
 #include <cstdint>              // for uint32_t
-#include <cstring>              // for std::strcmp(), std::memset()
+#include <cstdlib>              // for std::getenv()
+#include <cstring>              // for std::strcmp(), std::strlen(), std::memset()
 #include <ctime>                // for localtime_r(), std::strftime()
 #include <string>               // for std::string, std::to_string(), ...
 #include <utility>              // for std::move(), std::pair()
@@ -174,6 +175,13 @@ void Panel::render()
         const bool focused = Comm::is_focused(this);
         auto draw = std::move(m_canvas.draw());
 
+        std::string title(cwd());
+        if ( const char* home = std::getenv("HOME"); home && *home ) {
+            const size_t home_len = std::strlen(home);
+            if ( title.compare(0, home_len, home) == 0 && title[home_len] == '/' )
+                title.replace(0, home_len, "~");
+        }
+
         // --- Row 0: top frame + title ---
         draw.move(0, 0).color(kFgFrame, bg).fill(kFrameH)
             .move(0).put(kFrameTL)
@@ -185,7 +193,7 @@ void Panel::render()
             // consumes all remaining cells and must be ellipsized.
             .move(1).mid(width - 2).pad(1, 1).ellipsize(Draw::Keep::Right)
                 .color(focused ? kFgFrame : fg)
-                .put(cwd(), focused ? ATTR_REVERSE : 0);
+                .put(title, focused ? ATTR_REVERSE : 0);
 
         // --- Row 1: column headers ---
         draw.move(0, 1).color(kFgFrame, bg).fill(' ')
