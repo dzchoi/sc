@@ -180,7 +180,9 @@ void Panel::render()
             .move(column.date_x - 1).put(kFrameTT)
             .move(column.time_x - 1).put(kFrameTT)
             .move(width - 1).put(kFrameTR)
-            .move(1).mid(width - 2).ellipsize(Draw::Keep::Right)
+            // Keep one title-colored space adjacent to each end even when the path
+            // consumes all remaining cells and must be ellipsized.
+            .move(1).mid(width - 2).pad(1, 1).ellipsize(Draw::Keep::Right)
                 .put(cwd(), ATTR_REVERSE);
 
         // --- Row 1: column headers ---

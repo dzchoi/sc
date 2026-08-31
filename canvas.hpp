@@ -41,6 +41,11 @@ public:
     Draw& right(int span) { m_align = Align::Right; m_span = span; return *this; }
     Draw& mid(int span) { m_align = Align::Mid; m_span = span; return *this; }
 
+    // Reserves cells immediately before and after the next string passed to put().
+    // Padding participates in alignment but never in clipping: an overflowing string
+    // is shortened within the remaining inner field, preserving both padded edges.
+    Draw& pad(int left, int right);
+
     // Which part(s) of the text survive when it overflows the field, marking the cut
     // with a mid-string ellipsis ('…' U+2026) instead of a hard cut: Keep::Left/Right/
     // Mid keep the head/tail/middle slice (one ellipsis, in place of the discarded
@@ -87,6 +92,7 @@ private:
     uint32_t m_fg = 0, m_bg = 0;
     Align m_align = Align::Left;
     Keep m_keep = Keep::Default;
+    int m_pad_left = 0, m_pad_right = 0;
     int m_span;  // field width
 };
 

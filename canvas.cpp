@@ -87,6 +87,14 @@ Draw::Draw(Canvas& canvas)
 : m_canvas(canvas), m_span(m_canvas.m_width)
 {}
 
+Draw& Draw::pad(int left, int right)
+{
+    assert( left >= 0 && right >= 0 );
+    m_pad_left = left;
+    m_pad_right = right;
+    return *this;
+}
+
 Draw& Draw::put(Rune u, ushort mode)
 {
     assert( m_y >= 0 && m_y < m_canvas.m_height && m_x >= 0 && m_x < m_canvas.m_width );
@@ -170,10 +178,13 @@ Draw& Draw::put(std::string_view s, ushort mode)
     };
 
     const int xend = std::min(m_x + m_span, m_canvas.m_width);
+    const int span = xend - m_x;
+    assert( m_pad_left <= span && m_pad_right <= span - m_pad_left );
     const unsigned char* p = reinterpret_cast<const unsigned char*>(s.data());
     const unsigned char* pend = p + s.size();
 
-    if ( m_align == Align::Left && m_keep != Keep::Mid && m_keep != Keep::Right ) {
+    if ( m_pad_left == 0 && m_pad_right == 0 &&
+         m_align == Align::Left && m_keep != Keep::Mid && m_keep != Keep::Right ) {
         // A Left field with at most a single trailing ellipsis (Keep::Default/Left/Both)
         // can be streamed glyph-by-glyph; we never need to know its total width up
         // front.
@@ -189,8 +200,8 @@ Draw& Draw::put(std::string_view s, ushort mode)
     }
 
     else {
-        // Right-/mid-aligned, or a Left field with a Mid/Right ellipsize(): decode
-        // fully first, since the starting position depends on the text's total width.
+        // Padding, right/mid alignment, and a Left field with a Mid/Right ellipsize()
+        // all require the text's total width, so decode them fully first.
         std::vector<Glyph> buf;
         buf.reserve(s.size());  // upper bound on code point count; never overflows
         while ( p < pend ) {
@@ -200,22 +211,40 @@ Draw& Draw::put(std::string_view s, ushort mode)
         }
 
         const int n = static_cast<int>(buf.size());
-        const int span = xend - m_x;
-        if ( n <= span ) {
-            // Fits: position within the field per m_align; ellipsize() only matters on
-            // overflow.
-            int lead = span - n;
+        const int inner_span = span - m_pad_left - m_pad_right;
+
+        auto put_padding = [&](int count) {
+            while ( count-- > 0 )
+                m_canvas.cell(m_y, m_x++) = Glyph{' ', mode, m_fg, m_bg};
+        };
+
+        const bool fits = (n <= inner_span);
+        if ( fits ) {
+            // Align the padded text as one unit. These spaces are decoration owned by
+            // the field, so they remain adjacent to the text rather than filling the
+            // unused parts of the field.
+            int lead = span - n - m_pad_left - m_pad_right;
             if ( m_align == Align::Left ) lead = 0;
             else if ( m_align == Align::Mid ) lead /= 2;
             skip_or_fill(m_x + lead);
+        }
+
+        // Padding sets the text boundary before clipping is decided, so overflow
+        // cannot overwrite either padded edge.
+        put_padding(m_pad_left);
+        const int inner_xend = m_x + (fits ? n : inner_span);
+
+        if ( fits ) {
             for ( const Glyph& g : buf ) m_canvas.cell(m_y, m_x++) = g;
         }
 
         else if ( m_keep == Keep::Default ) {
             // Overflow, no ellipsis: hard-cut per m_align's own implicit direction.
-            // (Align::Left never reaches here with Keep::Default - see above.)
-            const int skip = (m_align == Align::Right) ? n - span : (n - span) / 2;
-            for ( int i = skip ; i < n && m_x < xend ; ++i )
+            // (An unpadded Align::Left never reaches here with Keep::Default.)
+            const int skip =
+                (m_align == Align::Right) ? n - inner_span :
+                (m_align == Align::Mid) ? (n - inner_span) / 2 : 0;
+            for ( int i = skip ; i < n && m_x < inner_xend ; ++i )
                 m_canvas.cell(m_y, m_x++) = buf[i];
         }
 
@@ -226,7 +255,7 @@ Draw& Draw::put(std::string_view s, ushort mode)
             const bool tail_cut =
                 (m_keep == Keep::Left || m_keep == Keep::Mid || m_keep == Keep::Both);
 
-            int ext_idx = -1, l_ext = 0;  // Keep::Both: index/length of a kept extension
+            int ext_idx = -1, l_ext = 0;  // Keep::Both extension index/length
             if ( m_keep == Keep::Both ) {
                 int dot_idx = -1;
                 for ( int i = 0 ; i < n ; ++i )
@@ -236,24 +265,26 @@ Draw& Draw::put(std::string_view s, ushort mode)
                     ext_idx = dot_idx + 1;
             }
 
-            int budget = span - head_cut - tail_cut - l_ext;
+            int budget = inner_span - head_cut - tail_cut - l_ext;
             if ( budget < 0 ) budget = 0;
             const int start =
                 (m_keep == Keep::Right) ? n - budget :
                 (m_keep == Keep::Mid) ? (n - budget) / 2 : 0;
 
-            if ( head_cut && m_x < xend )
+            if ( head_cut && m_x < inner_xend )
                 m_canvas.cell(m_y, m_x++) = Glyph{kEllipsis, mode, m_fg, m_bg};
-            for ( int i = 0 ; i < budget && m_x < xend ; ++i )
+            for ( int i = 0 ; i < budget && m_x < inner_xend ; ++i )
                 m_canvas.cell(m_y, m_x++) = buf[start + i];
-            if ( tail_cut && m_x < xend ) {
+            if ( tail_cut && m_x < inner_xend ) {
                 m_canvas.cell(m_y, m_x++) = Glyph{kEllipsis, mode, m_fg, m_bg};
                 if ( ext_idx >= 0 )
-                    for ( int i = ext_idx ; i < n && m_x < xend ; ++i )
+                    for ( int i = ext_idx ; i < n && m_x < inner_xend ; ++i )
                         m_canvas.cell(m_y, m_x++) = buf[i];
             }
         }
 
+        skip_or_fill(inner_xend);
+        put_padding(m_pad_right);
         skip_or_fill(xend);  // trailing blanks, if the field wasn't fully written.
     }
 
@@ -261,6 +292,7 @@ Draw& Draw::put(std::string_view s, ushort mode)
     m_align = Align::Left;
     m_span = m_canvas.m_width;
     m_keep = Keep::Default;
+    m_pad_left = m_pad_right = 0;
     return *this;
 }
 
