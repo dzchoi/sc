@@ -94,7 +94,8 @@ upper-right part of the terminal, leaving the prompt and command line available 
 it. Press `Ctrl+P` to show both panels. Both begin in the starting directory, then
 remember their own directories and selections as you use them.
 
-The directory name appears in the panel title. Entries are ordered with `..` first,
+The directory name appears in the panel title, highlighted only when that panel has
+focus. Entries are ordered with `..` first,
 then directories, then files; directories and files are sorted by name within their
 groups. The columns show the entry name, size or directory marker, modification date,
 and modification time. The panel footer shows details for the selected entry.

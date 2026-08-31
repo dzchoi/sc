@@ -171,6 +171,7 @@ void Panel::render()
         const int list_rows = height - kRowsPanelFrame;  // excludes header and footer.
         const uint32_t fg = kFgDefault;
         const uint32_t bg = kBgDefault;
+        const bool focused = Comm::is_focused(this);
         auto draw = std::move(m_canvas.draw());
 
         // --- Row 0: top frame + title ---
@@ -183,7 +184,8 @@ void Panel::render()
             // Keep one title-colored space adjacent to each end even when the path
             // consumes all remaining cells and must be ellipsized.
             .move(1).mid(width - 2).pad(1, 1).ellipsize(Draw::Keep::Right)
-                .put(cwd(), ATTR_REVERSE);
+                .color(focused ? kFgFrame : fg)
+                .put(cwd(), focused ? ATTR_REVERSE : 0);
 
         // --- Row 1: column headers ---
         draw.move(0, 1).color(kFgFrame, bg).fill(' ')
@@ -228,7 +230,7 @@ void Panel::render()
             }
 
             const bool selected = (idx == m_selected_idx);
-            const bool focused_selection = selected && Comm::is_focused(this);
+            const bool focused_selection = selected && focused;
             const ushort mode = focused_selection
                 ? ATTR_REVERSE | ATTR_CLEAR_FIELD : ATTR_CLEAR_FIELD;
             // The selected row's frame follows its text colour; other frames stay dim.
