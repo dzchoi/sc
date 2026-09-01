@@ -18,6 +18,14 @@ static inline int rune_width(Rune u)
     return width < 0 ? 1 : width;
 }
 
+// Canvas glyphs bypass tsetchar(), so classify Boxdraw runes at this construction
+// boundary before they reach the shared X renderer.
+static inline Glyph make_glyph(Rune u, ushort mode, uint32_t fg, uint32_t bg)
+{
+    if ( isboxdraw(u) ) mode |= ATTR_BOXDRAW;
+    return Glyph{u, mode, fg, bg};
+}
+
 // Minimal UTF-8 decoder. Returns bytes consumed; writes a code point (unicode char) to
 // *out. Never reads past `pend`, and never reports a length that would run past it
 // either.
@@ -109,7 +117,8 @@ Draw& Draw::put(Rune u, ushort mode)
     if ( width == 0 ) return *this;
 
     m_canvas.cell(m_y, m_x++) =
-        Glyph{u, static_cast<ushort>(width == 2 ? mode | ATTR_WIDE : mode), m_fg, m_bg};
+        make_glyph(u, static_cast<ushort>(width == 2 ? mode | ATTR_WIDE : mode),
+            m_fg, m_bg);
     if ( width == 2 )
         m_canvas.cell(m_y, m_x++) = Glyph{0, ATTR_WDUMMY, m_fg, m_bg};
     return *this;
@@ -120,7 +129,7 @@ Draw& Draw::fill(Rune u, ushort mode)
     assert( m_y >= 0 && m_y < m_canvas.m_height && rune_width(u) == 1 );
     const int xend = std::min(m_x + m_span, m_canvas.m_width);
     while ( m_x < xend )
-        m_canvas.cell(m_y, m_x++) = Glyph{u, mode, m_fg, m_bg};
+        m_canvas.cell(m_y, m_x++) = make_glyph(u, mode, m_fg, m_bg);
 
     m_span = m_canvas.m_width;
     // Note: m_align is not cleared.
@@ -170,8 +179,8 @@ bool Draw::put_left_ellipsized(std::string_view s, int xend, ushort mode)
     // If a double-width rune could not consume the prefix's final cell, retain the
     // extension's dot there instead of leaving a trailing blank in the field.
     const bool keep_dot = keep_ext && m_x < prefix_end;
-    m_canvas.cell(m_y, m_x++) = Glyph{kEllipsis, mode, m_fg, m_bg};
-    if ( keep_dot ) m_canvas.cell(m_y, m_x++) = Glyph{'.', mode, m_fg, m_bg};
+    m_canvas.cell(m_y, m_x++) = make_glyph(kEllipsis, mode, m_fg, m_bg);
+    if ( keep_dot ) m_canvas.cell(m_y, m_x++) = make_glyph('.', mode, m_fg, m_bg);
 
     if ( keep_ext ) {
         p = reinterpret_cast<const unsigned char*>(s.data()) + dot_byte_off + 1;  // skip '.'
@@ -188,17 +197,13 @@ Draw& Draw::put(std::string_view s, ushort mode)
 {
     assert( m_y >= 0 && m_y < m_canvas.m_height );
 
-    // Fast-forward m_x to to_x, clearing cells with ' ' along the way if ATTR_CLEAR_FIELD
-    // is set in the mode.
+    const bool clear_field = (mode & ATTR_CLEAR_FIELD) != 0;
+
+    // Fast-forward m_x to to_x, clearing cells with ' ' along the way when requested.
     auto skip_or_fill = [&](int to_x) {
-        if ( (mode & ATTR_CLEAR_FIELD) != 0 )
-            while ( m_x < to_x ) {
-                Glyph& g = m_canvas.cell(m_y, m_x++);
-                g.u = ' ';
-                g.mode = mode;
-                g.fg = m_fg;
-                g.bg = m_bg;
-            }
+        if ( clear_field )
+            while ( m_x < to_x )
+                m_canvas.cell(m_y, m_x++) = make_glyph(' ', mode, m_fg, m_bg);
         else
             m_x = to_x;
     };
@@ -236,8 +241,8 @@ Draw& Draw::put(std::string_view s, ushort mode)
             p += utf8_next(p, pend, &u);
             const int width = rune_width(u);
             if ( width == 0 ) continue;
-            buf.push_back(Glyph{u,
-                static_cast<ushort>(width == 2 ? mode | ATTR_WIDE : mode), m_fg, m_bg});
+            buf.push_back(make_glyph(u,
+                static_cast<ushort>(width == 2 ? mode | ATTR_WIDE : mode), m_fg, m_bg));
             if ( width == 2 )
                 buf.push_back(Glyph{0, ATTR_WDUMMY, m_fg, m_bg});
         }
@@ -247,7 +252,7 @@ Draw& Draw::put(std::string_view s, ushort mode)
 
         auto put_padding = [&](int count) {
             while ( count-- > 0 )
-                m_canvas.cell(m_y, m_x++) = Glyph{' ', mode, m_fg, m_bg};
+                m_canvas.cell(m_y, m_x++) = make_glyph(' ', mode, m_fg, m_bg);
         };
 
         const bool fits = (n <= inner_span);
@@ -319,9 +324,9 @@ Draw& Draw::put(std::string_view s, ushort mode)
             }
 
             if ( head_cut && m_x < inner_xend )
-                m_canvas.cell(m_y, m_x++) = Glyph{kEllipsis, mode, m_fg, m_bg};
+                m_canvas.cell(m_y, m_x++) = make_glyph(kEllipsis, mode, m_fg, m_bg);
             if ( split_head && m_x < inner_xend )
-                m_canvas.cell(m_y, m_x++) = Glyph{' ', mode, m_fg, m_bg};
+                m_canvas.cell(m_y, m_x++) = make_glyph(' ', mode, m_fg, m_bg);
             for ( int i = 0 ; i < budget ; ++i ) {
                 if ( (buf[start + i].mode & ATTR_WIDE) && i + 1 >= budget ) break;
                 m_canvas.cell(m_y, m_x++) = buf[start + i];
@@ -329,9 +334,9 @@ Draw& Draw::put(std::string_view s, ushort mode)
             if ( tail_cut && m_x < inner_xend ) {
                 const bool keep_dot =
                     ext_idx >= 0 && m_x < inner_xend - l_ext - 1;
-                m_canvas.cell(m_y, m_x++) = Glyph{kEllipsis, mode, m_fg, m_bg};
+                m_canvas.cell(m_y, m_x++) = make_glyph(kEllipsis, mode, m_fg, m_bg);
                 if ( keep_dot )
-                    m_canvas.cell(m_y, m_x++) = Glyph{'.', mode, m_fg, m_bg};
+                    m_canvas.cell(m_y, m_x++) = make_glyph('.', mode, m_fg, m_bg);
                 if ( ext_idx >= 0 )
                     for ( int i = ext_idx ; i < n ; ++i )
                         m_canvas.cell(m_y, m_x++) = buf[i];
