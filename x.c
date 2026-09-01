@@ -53,6 +53,7 @@ typedef struct {
 
 /* function definitions used in config.h */
 static void clipcopy(const Arg *);
+static void clipcopy_or_interrupt(const Arg *);
 static void clippaste(const Arg *);
 static void numlock(const Arg *);
 static void selpaste(const Arg *);
@@ -268,6 +269,20 @@ clipcopy(const Arg *dummy)
 		clipboard = XInternAtom(xw.dpy, "CLIPBOARD", 0);
 		XSetSelectionOwner(xw.dpy, clipboard, xw.win, CurrentTime);
 	}
+}
+
+void
+clipcopy_or_interrupt(const Arg *dummy)
+{
+	char *selection = getsel();
+
+	if (selection == NULL) {
+		ttywrite("\003", 1, 1);
+		return;
+	}
+
+	free(selection);
+	clipcopy(dummy);
 }
 
 void

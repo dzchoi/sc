@@ -104,6 +104,10 @@ control socket for data and acknowledgements. A successful `preprompt` reconcile
 focused panel and prompt padding synchronously, which prevents ordering dependencies
 between the PTY and socket channels.
 
+Terminal clipboard shortcuts remain in `x.c` and run before panel input. Ctrl+C copies
+an active terminal selection; without one, it writes the ordinary Ctrl+C byte to the
+PTY so the terminal line discipline can interrupt the foreground process.
+
 Ctrl+O is handled before effective visibility so it can restore hidden panels. `x.c`
 removes lock modifiers before dispatch, preserving shortcuts under Caps Lock and Num
 Lock. `Panel` redraws immediately for selection input only when the selection changes;

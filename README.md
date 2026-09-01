@@ -147,6 +147,13 @@ or shell metacharacters remain one command argument.
 The opposite panel's directory is also available through `SC_OTHER_DIR`; see
 [Environment variables](#environment-variables).
 
+## Copying and pasting
+
+Select terminal text with the mouse, then press `Ctrl+C` to copy it to the clipboard.
+Without a selection, `Ctrl+C` retains its terminal meaning and interrupts the foreground
+process. `Ctrl+V` pastes from the clipboard. The standard terminal aliases
+`Ctrl+Shift+C` and `Ctrl+Shift+V` remain available.
+
 ## Keyboard reference
 
 Except for `Ctrl+O`, the panel controls below apply while a panel is visible. `Tab`
@@ -252,21 +259,8 @@ next panel switch updates it.
 ## Branches and st patches
 
 The `sc` branch contains SC's own features without community patches. The `sc-patched`
-branch additionally applies these patches from the
-[st patches collection](https://st.suckless.org/patches/):
-
-- [patch: anysize](https://st.suckless.org/patches/anysize/) lets window managers
-  fit SC exactly to the available display area and centers the terminal grid within
-  balanced dynamic borders.
-- [patch: scrollback](https://st.suckless.org/patches/scrollback/) provides the
-  [terminal history controls](#scrolling-terminal-output-sc-patched).
-- [patch: CSI 22/23](https://st.suckless.org/patches/csi_22_23/) uses an eight-entry
-  stack to preserve window titles changed temporarily by programs such as Neovim.
-  Installed SC terminfo entries save and restore the title around alternate-screen
-  applications.
-
-Other community patches, including
-[Boxdraw](https://st.suckless.org/patches/boxdraw/), are not included on either branch.
+branch applies selected community patches from the
+[st patches collection](https://st.suckless.org/patches/) on top of `sc`.
 
 ## License
 
