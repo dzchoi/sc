@@ -61,15 +61,18 @@ constexpr uint32_t kFgSelected  = 3;
 constexpr uint32_t kFgFrame     = 6;
 
 // ----- frame glyphs (Unicode box drawing) -----------------------------------
-constexpr Rune kFrameH  = 0x2500;  // ─
-constexpr Rune kFrameV  = 0x2502;  // │
-constexpr Rune kFrameTL = 0x250c;  // ┌
-constexpr Rune kFrameTR = 0x2510;  // ┐
-constexpr Rune kFrameBL = 0x2514;  // └
-constexpr Rune kFrameBR = 0x2518;  // ┘
-constexpr Rune kFrameLT = 0x251c;  // ├
-constexpr Rune kFrameRT = 0x2524;  // ┤
-constexpr Rune kFrameTT = 0x252c;  // ┬
-constexpr Rune kFrameBT = 0x2534;  // ┴
+// The outer panel boundary is double-lined; interior table rules stay single-lined.
+constexpr Rune kFrameInnerH     = 0x2500;  // ─
+constexpr Rune kFrameInnerV     = 0x2502;  // │
+constexpr Rune kFrameInnerBT    = 0x2534;  // ┴
+constexpr Rune kFrameOuterH     = 0x2550;  // ═
+constexpr Rune kFrameOuterV     = 0x2551;  // ║
+constexpr Rune kFrameOuterTL    = 0x2554;  // ╔
+constexpr Rune kFrameOuterTR    = 0x2557;  // ╗
+constexpr Rune kFrameOuterBL    = 0x255a;  // ╚
+constexpr Rune kFrameOuterBR    = 0x255d;  // ╝
+constexpr Rune kFrameOuterTT    = 0x2564;  // ╤
+constexpr Rune kFrameOuterLT    = 0x255f;  // ╟
+constexpr Rune kFrameOuterRT    = 0x2562;  // ╢
 
 constexpr Rune kEllipsis = 0x2026;  // '…'

@@ -183,12 +183,12 @@ void Panel::render()
         }
 
         // --- Row 0: top frame + title ---
-        draw.move(0, 0).color(kFgFrame, bg).fill(kFrameH)
-            .move(0).put(kFrameTL)
-            .move(column.size_x - 1).put(kFrameTT)
-            .move(column.date_x - 1).put(kFrameTT)
-            .move(column.time_x - 1).put(kFrameTT)
-            .move(width - 1).put(kFrameTR)
+        draw.move(0, 0).color(kFgFrame, bg).fill(kFrameOuterH)
+            .move(0).put(kFrameOuterTL)
+            .move(column.size_x - 1).put(kFrameOuterTT)
+            .move(column.date_x - 1).put(kFrameOuterTT)
+            .move(column.time_x - 1).put(kFrameOuterTT)
+            .move(width - 1).put(kFrameOuterTR)
             // Keep one title-colored space adjacent to each end even when the path
             // consumes all remaining cells and must be ellipsized.
             .move(1).mid(width - 2).pad(1, 1).ellipsize(Draw::Keep::Right)
@@ -197,19 +197,19 @@ void Panel::render()
 
         // --- Row 1: column headers ---
         draw.move(0, 1).color(kFgFrame, bg).fill(' ')
-            .move(0).put(kFrameV)
+            .move(0).put(kFrameOuterV)
             .left(column.name_w)
             .with_fg(kFgSelected, [](Draw& d){ d.put("Name", ATTR_BOLD); })
-            .put(kFrameV)
+            .put(kFrameInnerV)
             .right(column.size_w)
             .with_fg(kFgSelected, [](Draw& d){ d.put("Size", ATTR_BOLD); })
-            .put(kFrameV)
+            .put(kFrameInnerV)
             .mid(column.date_w)
             .with_fg(kFgSelected, [](Draw& d){ d.put("Date", ATTR_BOLD); })
-            .put(kFrameV)
+            .put(kFrameInnerV)
             .mid(column.time_w)
             .with_fg(kFgSelected, [](Draw& d){ d.put("Time", ATTR_BOLD); })
-            .put(kFrameV);
+            .put(kFrameOuterV);
 
         // Keep the selection in view.
         if ( m_selected_idx < m_first_visible_idx )
@@ -229,11 +229,11 @@ void Panel::render()
 
             if ( idx >= static_cast<int>(m_entries.size()) ) {
                 draw.move(0, y).color(fg, bg).fill(' ')  // Clear the line first.
-                    .move(0).color(kFgFrame).put(kFrameV)
-                    .move(column.size_x - 1).put(kFrameV)
-                    .move(column.date_x - 1).put(kFrameV)
-                    .move(column.time_x - 1).put(kFrameV)
-                    .move(width - 1).put(kFrameV);
+                    .move(0).color(kFgFrame).put(kFrameOuterV)
+                    .move(column.size_x - 1).put(kFrameInnerV)
+                    .move(column.date_x - 1).put(kFrameInnerV)
+                    .move(column.time_x - 1).put(kFrameInnerV)
+                    .move(width - 1).put(kFrameOuterV);
                 continue;
             }
 
@@ -250,13 +250,13 @@ void Panel::render()
 
             // Draw row frame.
             draw.move(0, y)
-                .color(kFgFrame, bg).put(kFrameV).color(m_fgtext)
+                .color(kFgFrame, bg).put(kFrameOuterV).color(m_fgtext)
 
                 // Name column (abbreviated to fit or left-aligned)
                 .left(column.name_w).ellipsize(Draw::Keep::Both).put(
                     e.name + (e.is_dir ? "/" : "")
                     , mode)
-                .with_fg(m_fgframe, [&](Draw& d){ d.put(kFrameV, mode); })
+                .with_fg(m_fgframe, [&](Draw& d){ d.put(kFrameInnerV, mode); })
 
                 // Size column (right-aligned)
                 .right(column.size_w).put(
@@ -264,30 +264,30 @@ void Panel::render()
                     ? (e.name == "..") ? "UP--DIR" : "SUB-DIR"
                     : format_size(e.size)
                     , mode)
-                .with_fg(m_fgframe, [&](Draw& d){ d.put(kFrameV, mode); })
+                .with_fg(m_fgframe, [&](Draw& d){ d.put(kFrameInnerV, mode); })
 
                 // Date column
                 .right(column.date_w).put(date, mode)
-                .with_fg(m_fgframe, [&](Draw& d){ d.put(kFrameV, mode); })
+                .with_fg(m_fgframe, [&](Draw& d){ d.put(kFrameInnerV, mode); })
 
                 // Time column
                 .right(column.time_w).put(time, mode)
-                .color(kFgFrame).put(kFrameV);
+                .color(kFgFrame).put(kFrameOuterV);
         }
 
         // Row -3: separator frame
-        draw.move(0, height - 3).color(kFgFrame, bg).fill(kFrameH)
-            .move(0).put(kFrameLT)
-            .move(column.size_x - 1).put(kFrameBT)
-            .move(column.date_x - 1).put(kFrameBT)
-            .move(column.time_x - 1).put(kFrameBT)
-            .move(width - 1).put(kFrameRT);
+        draw.move(0, height - 3).color(kFgFrame, bg).fill(kFrameInnerH)
+            .move(0).put(kFrameOuterLT)
+            .move(column.size_x - 1).put(kFrameInnerBT)
+            .move(column.date_x - 1).put(kFrameInnerBT)
+            .move(column.time_x - 1).put(kFrameInnerBT)
+            .move(width - 1).put(kFrameOuterRT);
 
         // Row -2: selected entry
         const Entry& e = m_entries[m_selected_idx];
         auto [date, time] = format_mtime(e.mtime);
         draw.move(0, height - 2).color(fg, bg).fill(' ')
-            .move(0).with_fg(kFgFrame, [](Draw& d){ d.put(kFrameV); })
+            .move(0).with_fg(kFgFrame, [](Draw& d){ d.put(kFrameOuterV); })
 
             // Name column (abbreviated to fit or left-aligned)
             .left(column.name_w).ellipsize(Draw::Keep::Both)
@@ -307,12 +307,12 @@ void Panel::render()
             // Time column
             .move(column.time_x)
             .right(column.time_w).put(time)
-            .color(kFgFrame).put(kFrameV);
+            .color(kFgFrame).put(kFrameOuterV);
 
         // Row -1: bottom frame
-        draw.move(0, height - 1).color(kFgFrame, bg).fill(kFrameH)
-            .move(0).put(kFrameBL)
-            .move(width - 1).put(kFrameBR);
+        draw.move(0, height - 1).color(kFgFrame, bg).fill(kFrameOuterH)
+            .move(0).put(kFrameOuterBL)
+            .move(width - 1).put(kFrameOuterBR);
     }
 
     m_canvas.present();
