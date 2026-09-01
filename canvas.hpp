@@ -14,7 +14,7 @@ extern "C" {
 
 
 // Additional ATTR: Clears the entire region of a left/right/mid-aligned field.
-constexpr ushort ATTR_CLEAR_FIELD = ATTR_WDUMMY << 1;
+constexpr ushort ATTR_CLEAR_FIELD = ATTR_BOXDRAW << 1;
 
 class Canvas;
 

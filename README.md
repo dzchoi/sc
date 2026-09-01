@@ -274,8 +274,23 @@ next panel switch updates it.
 ## Branches and st patches
 
 The `sc` branch contains SC's own features without community patches. The `sc-patched`
-branch applies selected community patches from the
-[st patches collection](https://st.suckless.org/patches/) on top of `sc`.
+branch additionally applies these patches from the
+[st patches collection](https://st.suckless.org/patches/):
+
+- [patch: anysize](https://st.suckless.org/patches/anysize/) lets window managers
+  fit SC exactly to the available display area and centers the terminal grid within
+  balanced dynamic borders.
+- [patch: scrollback](https://st.suckless.org/patches/scrollback/) provides the
+  [terminal history controls](#scrolling-terminal-output-sc-patched).
+- [patch: CSI 22/23](https://st.suckless.org/patches/csi_22_23/) uses an eight-entry
+  stack to preserve window titles changed temporarily by programs such as Neovim.
+  Installed SC terminfo entries save and restore the title around alternate-screen
+  applications.
+- [patch: Boxdraw](https://st.suckless.org/patches/boxdraw/) renders terminal
+  line- and block-drawing characters independently of the font so adjacent cells align
+  without gaps. Bold line rendering and pixel-style braille remain opt-in through
+  `boxdraw_bold` and `boxdraw_braille` in `config.h`. SC's panel borders use their own
+  renderer and are unaffected.
 
 ## License
 

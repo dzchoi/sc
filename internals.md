@@ -170,3 +170,7 @@ cwd, editable buffer, command execution, and prompt.
   parser accepts the standard title-stack selectors while applying them to the X11
   window title, and terminal reset releases every saved title and restores the
   configured default.
+- Keep Boxdraw attributes in terminal glyph state and its Xft primitives in
+  `boxdraw.c`. `Canvas` keeps its field-control attribute on the next unused bit and
+  classifies supported runes because panel glyphs bypass `tsetchar()`, so panel frame
+  glyphs reach the same Boxdraw renderer as terminal content.

@@ -9,7 +9,7 @@ include config.mk
 # libstdc++ is pulled in automatically.
 BUILDDIR = .build
 BIN		= sc
-SRC_C   = st.c x.c
+SRC_C   = st.c x.c boxdraw.c
 SRC_CPP = comm.cpp panel.cpp canvas.cpp shell.cpp
 OBJ     = $(SRC_C:%.c=$(BUILDDIR)/%.o) $(SRC_CPP:%.cpp=$(BUILDDIR)/%.o)
 
@@ -35,6 +35,7 @@ $(BUILDDIR)/%.o: %.cpp | $(BUILDDIR)
 $(BUILDDIR)/canvas.o:  canvas.cpp canvas.hpp sc_config.hpp st.h win.h
 $(BUILDDIR)/st.o:      comm_api.h config.h st.h win.h
 $(BUILDDIR)/x.o:       arg.h comm_api.h config.h st.h win.h
+$(BUILDDIR)/boxdraw.o: config.h st.h boxdraw_data.h
 $(BUILDDIR)/comm.o:    canvas.hpp comm.hpp comm_api.h panel.hpp sc_config.hpp shell.hpp st.h
 $(BUILDDIR)/panel.o:   canvas.hpp comm.hpp panel.hpp sc_config.hpp shell.hpp st.h
 $(BUILDDIR)/shell.o:   canvas.hpp comm.hpp panel.hpp sc_config.hpp shell.hpp st.h
@@ -56,7 +57,7 @@ clean:
 dist: clean
 	mkdir -p st-$(VERSION)
 	cp -R FAQ LEGACY TODO LICENSE Makefile README config.mk\
-		config.def.h st.info st.1 arg.h st.h win.h comm_api.h panel.hpp comm.hpp shell.hpp canvas.hpp sc_config.hpp sc.zsh\
+		config.def.h st.info st.1 arg.h st.h win.h boxdraw_data.h comm_api.h panel.hpp comm.hpp shell.hpp canvas.hpp sc_config.hpp sc.zsh\
 		$(SRC_C) $(SRC_CPP)\
 		st-$(VERSION)
 	tar -cf - st-$(VERSION) | gzip > st-$(VERSION).tar.gz
