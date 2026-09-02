@@ -4,13 +4,14 @@
 
 #pragma once
 
+#include <string_view>          // for std::string_view
 #include <sys/types.h>          // for pid_t
 #include <sys/un.h>             // for sockaddr_un
 #include <unistd.h>             // for tcgetpgrp()
 
-#include "panel.hpp"            // for PanelDirectory
 
 
+class PanelDirectory;
 
 enum class ZleEvent {
     CdParent,
@@ -50,9 +51,10 @@ public:
     // Whether the shell owns the PTY's foreground process group.
     bool owns_pty() const { return ::tcgetpgrp(m_pty_fd) == m_shell_pid; }
 
-    // Captures the shell cwd and a descriptor for that same directory through procfs.
-    // The cwd always ends with '/'; failure terminates SC because panels require both.
-    PanelDirectory capture_cwd() const;
+    // Captures the shell cwd through procfs. Its display path retains logical_cwd when
+    // that path names the same inode and otherwise uses a procfs-derived fallback. The
+    // display path is slash-terminated; failure terminates SC.
+    PanelDirectory capture_cwd(std::string_view logical_cwd) const;
 
     // Delivers a fixed SC control event to the shell's ZLE input stream.
     void send_event(ZleEvent event) const;
@@ -63,7 +65,7 @@ private:
     inline static constexpr char kSocketName[] = "/control";
     inline static constexpr char kZshEnvName[] = "/.zshenv";
 
-    pid_t m_my_pid = 0;
+    pid_t m_owner_pid = 0;
     int m_ipc_fd = -1;
     int m_pty_fd = -1;
     pid_t m_shell_pid = 0;

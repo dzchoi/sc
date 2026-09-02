@@ -31,7 +31,7 @@ void Shell::preinit()
 {
     if ( m_ipc_fd >= 0 ) return;
 
-    m_my_pid = ::getpid();
+    m_owner_pid = ::getpid();
 
     // Creates a unique temporary directory ("<base>/sc-XXXXXX") under `base`,
     // populating m_runtime_dir[] with the name.
@@ -167,7 +167,8 @@ void Shell::service_ipc()
     const int client = ::accept4(m_ipc_fd, nullptr, nullptr, SOCK_CLOEXEC);
     if ( client < 0 ) return;
 
-    char request[64];
+    // PATH_MAX plus "preprompt ", an int, separators, newline, and NUL.
+    char request[PATH_MAX + 32];
     std::string reply;
     if ( const ssize_t n = ::read(client, request, sizeof(request) - 1); n > 0 ) {
         request[n] = '\0';
@@ -177,23 +178,32 @@ void Shell::service_ipc()
                 reply = *entry;
         }
 
-        else if ( std::strcmp(request, "focused_directory\n") == 0 ) {
+        else if ( std::strcmp(request, "directory_for_shell\n") == 0 ) {
             assert( m_preprompt_requested );
-            reply = Comm::focused_directory();
+            reply = Comm::directory_for_shell();
         }
 
         else if ( std::strncmp(request, "preprompt ", 10) == 0
           && request[n - 1] == '\n' ) {
-            int applied_padding;
             const char* first = request + 10;  // 10 == strlen("preprompt ")
             const char* last = request + n - 1;
-            const auto result = std::from_chars(first, last, applied_padding);
-            if ( result.ec == std::errc{} && result.ptr == last && applied_padding >= 0 ) {
-                // A preprompt transaction refreshes panel data before calculating
-                // placement from the terminal's prompt cursor.
-                Comm::reload_panels(!m_preprompt_requested);
-                reply = std::to_string(Comm::adjust_padding(applied_padding));
-                m_preprompt_requested = true;
+            const std::string_view payload(first, last - first);
+            const size_t separator = payload.rfind(' ');
+            if ( separator != std::string_view::npos ) {
+                const std::string_view arg1 = payload.substr(0, separator);   // cwd
+                const std::string_view arg2 = payload.substr(separator + 1);
+                int old_padding;
+                const auto result = std::from_chars(
+                    arg2.data(), arg2.data() + arg2.size(), old_padding);
+                if ( result.ec == std::errc{}
+                  && result.ptr == arg2.data() + arg2.size()
+                  && !arg1.empty() && arg1.front() == '/' && old_padding >= 0 ) {
+                    // A preprompt transaction refreshes panel data before calculating
+                    // placement from the terminal's prompt cursor.
+                    Comm::reload_panels(!m_preprompt_requested, arg1);
+                    reply = std::to_string(Comm::adjust_padding(old_padding));
+                    m_preprompt_requested = true;
+                }
             }
         }
     }
@@ -210,7 +220,7 @@ void Shell::service_ipc()
 void Shell::cleanup() noexcept
 {
     // Prevent the forked process from destroying the parent’s resources.
-    if ( m_my_pid != ::getpid() ) return;
+    if ( m_owner_pid != ::getpid() ) return;
 
     const int fd = m_ipc_fd;
     m_ipc_fd = -1;
@@ -269,28 +279,14 @@ void Shell::cleanup_stale(const char* base)
     ::closedir(dir);
 }
 
-PanelDirectory Shell::capture_cwd() const
+PanelDirectory Shell::capture_cwd(std::string_view logical_cwd) const
 {
     char proc[32];
     std::snprintf(proc, sizeof(proc), "/proc/%d/cwd", static_cast<int>(m_shell_pid));
     const int fd = ::open(proc, O_PATH | O_DIRECTORY | O_CLOEXEC);
     if ( fd < 0 )
         die("open shell cwd failed: %s\n", std::strerror(errno));
-
-    char fd_proc[32];
-    std::snprintf(fd_proc, sizeof(fd_proc), "/proc/self/fd/%d", fd);
-    char path[PATH_MAX];
-    const ssize_t n = ::readlink(fd_proc, path, sizeof(path) - 1);
-    if ( n <= 0 || static_cast<size_t>(n) == sizeof(path) - 1 ) {
-        const int error = errno;
-        ::close(fd);
-        die("read shell cwd failed: %s\n",
-            n < 0 ? std::strerror(error) : n == 0 ? "empty path" : "path too long");
-    }
-
-    std::string cwd(path, n);
-    if ( cwd.back() != '/' ) cwd.push_back('/');
-    return PanelDirectory{std::move(cwd), fd};
+    return PanelDirectory{std::string(logical_cwd), fd};
 }
 
 void Shell::send_event(ZleEvent event) const

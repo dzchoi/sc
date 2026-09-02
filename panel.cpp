@@ -5,16 +5,17 @@
 #include <cerrno>               // for errno
 #include <cstdint>              // for uint32_t
 #include <cstdlib>              // for std::getenv()
-#include <cstring>              // for std::strcmp(), std::strlen(), std::memset()
+#include <cstring>              // for std::strcmp(), std::strlen()
 #include <ctime>                // for localtime_r(), std::strftime()
 #include <string>               // for std::string, std::to_string(), ...
 #include <utility>              // for std::move(), std::pair()
 
 #include <dirent.h>             // for DIR, fdopendir(), readdir(), closedir()
 #include <fcntl.h>              // for openat(), O_*, AT_SYMLINK_NOFOLLOW
+#include <limits.h>             // for PATH_MAX
 #include <sys/stat.h>           // for struct stat, fstat(), fstatat()
 #include <sys/types.h>          // for off_t, time_t
-#include <unistd.h>             // for close(), getpid()
+#include <unistd.h>             // for close(), getpid(), readlink()
 #include <X11/keysym.h>         // for XK_*
 
 #include "comm.hpp"             // for Comm
@@ -27,7 +28,20 @@ PanelDirectory::PanelDirectory(std::string cwd, int fd)
 : m_cwd(std::move(cwd)), m_fd(fd)
 {
     assert( m_fd >= 0 );
-    assert( !m_cwd.empty() && m_cwd.back() == '/' );
+
+    if ( !cwd_matches_inode() ) {
+        char path[PATH_MAX];
+        const ssize_t n = ::readlink(proc_path().c_str(), path, sizeof(path) - 1);
+        if ( n <= 0 || static_cast<size_t>(n) == sizeof(path) - 1 ) {
+            const int error = errno;
+            ::close(m_fd);
+            m_fd = -1;
+            die("read panel directory path failed: %s\n",
+                n < 0 ? std::strerror(error) : n == 0 ? "empty path" : "path too long");
+        }
+        m_cwd.assign(path, n);
+    }
+    if ( m_cwd.back() != '/' ) m_cwd.push_back('/');
 }
 
 PanelDirectory::PanelDirectory(PanelDirectory&& other) noexcept
@@ -72,6 +86,21 @@ std::string PanelDirectory::proc_path() const
     return "/proc/" + std::to_string(::getpid()) + "/fd/" + std::to_string(m_fd);
 }
 
+bool PanelDirectory::cwd_matches_inode() const
+{
+    assert( !m_cwd.empty() && m_cwd.front() == '/' );
+    struct stat path{}, retained{};
+    return ::stat(m_cwd.c_str(), &path) == 0 && ::fstat(m_fd, &retained) == 0
+        && path.st_dev == retained.st_dev && path.st_ino == retained.st_ino;
+}
+
+std::string Panel::directory_for_shell() const
+{
+    if ( m_directory.cwd_matches_inode() )
+        return "L" + std::string(cwd());
+    return "P" + m_directory.proc_path();
+}
+
 
 
 template <typename T>
@@ -80,12 +109,17 @@ constexpr T clamp_between(T v, T lo, T hi)
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
-// Human-readable size, fits in kColsSize cells (right-aligned when printed).
-// Byte counts up to 1M are shown verbatim (exact); larger sizes are abbreviated as
-// "DDDD.DM" (one truncated decimal digit, unit suffix M/G/T), where the integer part is
-// always < 1024.
-static std::string format_size(off_t bytes)
+// Formats the Size column within kColsSize cells. Directories and symlinks use type
+// markers; regular-file byte counts up to 1M are exact, while larger values use
+// "DDDD.DM" (one truncated decimal digit, unit suffix M/G/T) with an integer part below
+// 1024.
+static std::string format_size(const Panel::Entry& entry)
 {
+    if ( entry.is_symlink() ) return "SYMLINK";
+    if ( entry.is_directory() )
+        return entry.name == ".." ? "UP--DIR" : "SUB-DIR";
+
+    const off_t bytes = entry.size;
     assert( bytes >= 0 );
     constexpr off_t ExactMax = 1024LL * 1024;
     if ( bytes <= ExactMax )
@@ -131,6 +165,28 @@ static std::pair<std::string, std::string> format_mtime(time_t mtime)
     if ( time.size() > 0 )
         time.push_back(tm_val.tm_hour < 12 ? 'a' : 'p');
     return {date, time};
+}
+
+static char entry_indicator(Panel::Entry::Type type)
+{
+    using Type = Panel::Entry::Type;
+    switch ( type ) {
+        case Type::Directory:     return '/';
+        case Type::SymlinkFile:   return '@';
+        case Type::SymlinkDir:    return '>';
+        case Type::BrokenSymlink: return '!';
+        default:                  return 0;
+    }
+}
+
+static Draw& draw_name(Draw& draw, const Panel::Entry& entry, int width,
+    ushort mode = ATTR_NULL)
+{
+    draw.left(width).ellipsize(Draw::Keep::Both);
+    if ( const char indicator = entry_indicator(entry.type) )
+        return draw.put_with_suffix(entry.name, indicator,
+            mode & ATTR_REVERSE ? kFgDefault : kFgIndicator, mode);
+    return draw.put(entry.name, mode);
 }
 
 
@@ -250,20 +306,14 @@ void Panel::render()
 
             // Draw row frame.
             draw.move(0, y)
-                .color(kFgFrame, bg).put(kFrameOuterV).color(m_fgtext)
+                .color(kFgFrame, bg).put(kFrameOuterV).color(m_fgtext);
 
-                // Name column (abbreviated to fit or left-aligned)
-                .left(column.name_w).ellipsize(Draw::Keep::Both).put(
-                    e.name + (e.is_dir ? "/" : "")
-                    , mode)
+            // Name column (abbreviated to fit or left-aligned)
+            draw_name(draw, e, column.name_w, mode)
                 .with_fg(m_fgframe, [&](Draw& d){ d.put(kFrameInnerV, mode); })
 
                 // Size column (right-aligned)
-                .right(column.size_w).put(
-                    e.is_dir
-                    ? (e.name == "..") ? "UP--DIR" : "SUB-DIR"
-                    : format_size(e.size)
-                    , mode)
+                .right(column.size_w).put(format_size(e), mode)
                 .with_fg(m_fgframe, [&](Draw& d){ d.put(kFrameInnerV, mode); })
 
                 // Date column
@@ -287,18 +337,14 @@ void Panel::render()
         const Entry& e = m_entries[m_selected_idx];
         auto [date, time] = format_mtime(e.mtime);
         draw.move(0, height - 2).color(fg, bg).fill(' ')
-            .move(0).with_fg(kFgFrame, [](Draw& d){ d.put(kFrameOuterV); })
+            .move(0).with_fg(kFgFrame, [](Draw& d){ d.put(kFrameOuterV); });
 
-            // Name column (abbreviated to fit or left-aligned)
-            .left(column.name_w).ellipsize(Draw::Keep::Both)
-                .put(e.name + (e.is_dir ? "/" : ""))
+        // Name column (abbreviated to fit or left-aligned)
+        draw_name(draw, e, column.name_w)
 
             // Size column (right-aligned)
             .move(column.size_x)
-            .right(column.size_w).put(
-                e.is_dir
-                ? (e.name == "..") ? "UP--DIR" : "SUB-DIR"
-                : format_size(e.size))
+            .right(column.size_w).put(format_size(e))
 
             // Date column
             .move(column.date_x)
@@ -322,9 +368,20 @@ void Panel::load_entries(std::string_view prev_path)
 {
     m_entries.clear();
 
+    const auto determine_type = [fd = m_directory.fd()](const char* name, mode_t mode) {
+        using Type = Entry::Type;
+        if ( S_ISDIR(mode) ) return Type::Directory;
+        if ( !S_ISLNK(mode) ) return Type::File;
+
+        struct stat target;
+        if ( ::fstatat(fd, name, &target, 0) != 0 )
+            return Type::BrokenSymlink;
+        return S_ISDIR(target.st_mode) ? Type::SymlinkDir : Type::SymlinkFile;
+    };
+
     // Manually add ".." as the first entry in case the filesystem's readdir() does not
-    // enumerate it.
-    m_entries.emplace_back("..", true, 0, -1);  // mtime == -1 shows empty Date and Time.
+    // enumerate it. (mtime == -1 shows empty Date and Time.)
+    m_entries.emplace_back("..", Entry::Type::Directory, 0, -1);
 
     const int scan_fd = ::openat(m_directory.fd(), ".",
         O_RDONLY | O_DIRECTORY | O_CLOEXEC);
@@ -333,12 +390,12 @@ void Panel::load_entries(std::string_view prev_path)
             while ( auto* dirent = ::readdir(dir) ) {
                 if ( std::strcmp(dirent->d_name, ".")  == 0 ) continue;
                 if ( std::strcmp(dirent->d_name, "..") == 0 ) continue;
-                struct stat st;
-                if ( ::fstatat(m_directory.fd(), dirent->d_name, &st,
-                        AT_SYMLINK_NOFOLLOW) != 0 )
-                    std::memset(&st, 0, sizeof(st));
-                m_entries.emplace_back(dirent->d_name, S_ISDIR(st.st_mode), st.st_size,
-                    st.st_mtime);
+                struct stat st{};
+                const auto type = ::fstatat(m_directory.fd(), dirent->d_name, &st,
+                    AT_SYMLINK_NOFOLLOW) == 0
+                    ? determine_type(dirent->d_name, st.st_mode)
+                    : Entry::Type::File;
+                m_entries.emplace_back(dirent->d_name, type, st.st_size, st.st_mtime);
             }
             ::closedir(dir);  // closes both dir and scan_fd.
         }
@@ -349,7 +406,7 @@ void Panel::load_entries(std::string_view prev_path)
     // ".." is already first; order the remaining snapshot as directories, then files.
     std::sort(m_entries.begin() + 1, m_entries.end(),
         [](const Entry& a, const Entry& b) {
-            if ( a.is_dir != b.is_dir ) return a.is_dir;
+            if ( a.is_directory() != b.is_directory() ) return a.is_directory();
             return a.name < b.name;
         });
 

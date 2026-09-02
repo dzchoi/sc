@@ -36,12 +36,12 @@ public:
 
     // Captures the shell directory, initializes both panels on `init`, then reloads
     // only the focused panel at later boundaries.
-    static void reload_panels(bool init);
+    static void reload_panels(bool init, std::string_view logical_cwd);
     // Returns the focused selection only while a panel is effectively visible.
     static std::optional<std::string_view> selected_entry();
-    // Returns a procfs path ("/proc/<sc-pid>/fd/<panel-fd>") that resolves to the
-    // focused panel's pinned directory.
-    static std::string focused_directory() { return m_focus->directory_proc_path(); }
+    // Returns the focused panel's validated logical or procfs path, prefixed with the
+    // corresponding "L"/"P" shell cd mode.
+    static std::string directory_for_shell() { return m_focus->directory_for_shell(); }
     // Computes prompt padding from the focused canvas and terminal cursor.
     static int adjust_padding(int applied_padding);
 

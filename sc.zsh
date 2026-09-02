@@ -91,7 +91,7 @@ _sc_get_selected_entry() {
 
 _sc_update_prompt() {
     local prefix=''
-    _scctl preprompt "$_sc_prompt_padding" || REPLY=0
+    _scctl preprompt "$PWD" "$_sc_prompt_padding" || REPLY=0
     repeat $REPLY; do prefix+=$'\n'; done
     _sc_prompt_padding=$REPLY
     PROMPT="${prefix}${_sc_prompt_base}"
@@ -130,7 +130,12 @@ _sc_cd() {
 
 _sc_switch_panel() {
     SC_OTHER_DIR=$PWD
-    _scctl focused_directory && _sc_cd "$REPLY" -P
+    _scctl directory_for_shell || return
+    if [[ $REPLY[1] == L ]]; then
+        _sc_cd "${REPLY[2,-1]}"
+    elif [[ $REPLY[1] == P ]]; then
+        _sc_cd "${REPLY[2,-1]}" -P
+    fi
 }
 
 _sc_cd_parent() {

@@ -71,10 +71,10 @@ for Enter behavior.
 
 ## Control socket
 
-The Zsh adapter sends `selected`, `focused_directory`, and
-`preprompt <applied_padding>` through `_scctl`. The function uses zsh's socket and
-system modules to connect to the non-exported `SC_SOCKET`, send one request, read its
-response through EOF, close the descriptor, and place the response in `REPLY`.
+The Zsh adapter sends `selected`, `directory_for_shell`, and
+`preprompt <cwd> <old_padding>` through `_scctl`. The function uses zsh's
+socket and system modules to connect to the non-exported `SC_SOCKET`, send one request,
+read its response through EOF, close the descriptor, and place the response in `REPLY`.
 Callers consume `REPLY` directly, so requests require neither an external helper nor a
 command-substitution subshell. Ordinary child commands and nested shells cannot attach
 to the outer SC process because they do not inherit the socket path.
@@ -86,9 +86,12 @@ Afterward, `x.c` adds `shell_ipc_fd()` to its `pselect()` fd set and calls
 - `Shell::service_ipc()` replies to `selected` with the focused panel's entry name, or
   no payload when no panel is effectively visible. The Zsh widget checks the selected
   path's current type before acting on it;
-- `focused_directory` returns the focused panel's procfs navigation target;
-- `preprompt <applied_padding>` synchronously reads the shell cwd, calls
-  `Comm::reload_panels()`, then returns the result of
+- `directory_for_shell` returns the focused panel's logical cwd with an `L` prefix while
+  it names the retained inode; otherwise it returns the procfs target with a `P` prefix.
+  `_sc_switch_panel` uses the prefix to select logical or physical `cd` semantics;
+- `preprompt <cwd> <old_padding>` synchronously captures the shell cwd,
+  validates the logical name against its descriptor, calls `Comm::reload_panels()`,
+  then returns the result of
   `Comm::adjust_padding()`: the total number of prompt-owned newlines needed
   after replacing the adapter's existing prefix;
 
@@ -108,21 +111,21 @@ avoids maintaining a second cursor position alongside the terminal's authoritati
 state.
 
 Before zsh renders or refreshes a prompt, `_sc_update_prompt` sends
-`preprompt <applied_padding>`. SC refreshes the focused panel snapshot, discounts
-the adapter's existing prompt-owned newlines from the terminal cursor row, and returns
-the total number of real newlines needed in `PROMPT`; `_sc_refresh_prompt` then calls
-`zle reset-prompt`. `_sc_precmd` starts each new prompt with `applied_padding` set to
-zero. The adapter treats a failed request as zero required padding, leaving an ordinary
-unpadded prompt.
+`preprompt <cwd> <old_padding>`. SC refreshes the focused panel snapshot,
+discounts the adapter's existing prompt-owned newlines from the terminal cursor row,
+and returns the total number of real newlines needed in `PROMPT`; `_sc_refresh_prompt`
+then calls `zle reset-prompt`. `_sc_precmd` sends zero as `old_padding` for each new
+prompt. The adapter treats a failed request as zero required padding, leaving an
+ordinary unpadded prompt.
 
 ZLE emits and tracks these newlines itself, so its display model remains valid.
 SC never moves the terminal cursor or fakes a `SIGWINCH` to uncover a prompt.
 
 Directory and user-command widgets call `zle -I` before taking control of the terminal.
-Before invalidation, they add the current `BUFFERLINES` to the applied-padding count so
-the cursor row released below a multiline or wrapped editing display can be discounted.
-If a successful command leaves primary-screen output, that cursor instead marks an
-output boundary rather than the active prompt boundary.
+Before invalidation, they add the current `BUFFERLINES` to the value later sent as
+`old_padding`, so the cursor row released below a multiline or wrapped editing display
+can be discounted. If a successful command leaves primary-screen output, that cursor
+instead marks an output boundary rather than the active prompt boundary.
 They then pass the action's status to `_sc_refresh_prompt`. On success, that function
 sends a preprompt request and resets the active prompt. On failure, it clears the stored
 padding and restores the unpadded `PROMPT` value without resetting the active ZLE

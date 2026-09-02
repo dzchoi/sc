@@ -95,10 +95,16 @@ it. Press `Ctrl+P` to show both panels. Both begin in the starting directory, th
 remember their own directories and selections as you use them.
 
 The directory name appears in the panel title, with the user's home directory shown as
-`~`, and is highlighted only when that panel has focus. Entries are ordered with `..`
-first, then directories, then files; directories and files are sorted by name within
-their groups. The columns show the entry name, size or directory marker, modification
-date, and modification time. The panel footer shows details for the selected entry.
+`~`, and is highlighted only when that panel has focus. The title retains the shell's
+logical path, such as `/bin/` when `/bin` links to `/usr/bin`, while that path still
+names the displayed directory. Entries are ordered with `..` first, then directories
+(including symlinks to directories), then files; entries are sorted by name within
+those groups. The columns show the entry name, size or directory marker, modification
+date, and modification time. Directories end in a cyan `/`;
+symlinks end in a cyan `@`, `>`, or `!` for a non-directory target, directory target,
+or unresolved target, respectively, and show `SYMLINK` in the size column. A
+highlighted indicator uses the normal foreground so the entire selected name reverses
+uniformly. The panel footer shows details for the selected entry.
 
 Panels require a terminal at least 80 columns wide and 12 rows high. They disappear
 below that size and return when the terminal is large enough again.
@@ -235,6 +241,10 @@ Each panel remembers its directory even while the panel is inactive. If another
 command removes that directory, `Tab` can still switch into it. The panel title marks
 the directory as `(deleted)`, and `..` remains available even when every ordinary
 entry has gone.
+
+If a logical title path is renamed, removed, or replaced while its directory remains
+accessible, SC falls back to the pathname reported for its retained descriptor. This
+keeps the title tied to the displayed inode rather than showing a stale alias.
 
 Use `cd ..`, `Ctrl+Page Up`, or a longer relative path such as `cd ../..` to reach an
 existing parent. SC does not choose a replacement directory automatically. A custom

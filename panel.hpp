@@ -14,8 +14,8 @@
 
 
 
-// Move-only handle and display name for one panel directory. The descriptor pins the
-// directory inode; m_cwd is only its current, user-facing name from procfs.
+// Move-only handle and display path for a panel directory. m_fd pins the directory
+// inode; m_cwd preserves a validated logical path or stores its procfs-derived fallback.
 class PanelDirectory {
 public:
     PanelDirectory() =default;
@@ -34,6 +34,8 @@ public:
     PanelDirectory duplicate() const;
     // Returns whether both initialized handles identify the same directory inode.
     bool same_inode(const PanelDirectory& other) const;
+    // Returns whether the display cwd still resolves to the retained inode.
+    bool cwd_matches_inode() const;
     // Returns "/proc/<sc-pid>/fd/<fd>", which resolves to this retained directory.
     std::string proc_path() const;
 
@@ -48,14 +50,25 @@ class Panel {
 public:
     // A single directory entry as displayed in the panel.
     struct Entry {
+        enum class Type { File, Directory, SymlinkFile, SymlinkDir, BrokenSymlink };
+
         std::string name;
-        bool    is_dir = false;
+        Type    type = Type::File;
         off_t   size = 0;
         time_t  mtime = 0;
 
-        Entry(std::string name, bool is_dir, off_t size, time_t mtime)
-        : name(std::move(name)), is_dir(is_dir), size(size), mtime(mtime)
+        Entry(std::string name, Type type, off_t size, time_t mtime)
+        : name(std::move(name)), type(type), size(size), mtime(mtime)
         {}
+
+        bool is_directory() const {
+            return type == Type::Directory || type == Type::SymlinkDir;
+        }
+
+        bool is_symlink() const {
+            return type == Type::SymlinkFile || type == Type::SymlinkDir
+                || type == Type::BrokenSymlink;
+        }
     };
 
     Panel() =default;
@@ -68,7 +81,9 @@ public:
     const Canvas& canvas() const { return m_canvas; }
 
     std::string_view cwd() const { return m_directory.cwd(); }
-    std::string directory_proc_path() const { return m_directory.proc_path(); }
+    // Prefixes the shell path with L for a valid logical cwd or P for the procfs
+    // fallback, allowing Zsh to choose logical or physical cd semantics.
+    std::string directory_for_shell() const;
 
     // Comm supplies disjoint horizontal ranges and guarantees that both panels receive
     // the same top and height. Shared vertical geometry lets Comm invalidate and test

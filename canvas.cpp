@@ -1,3 +1,4 @@
+#include <algorithm>            // for std::min()
 #include <cassert>              // for assert()
 #include <cstddef>              // for ptrdiff_t, size_t
 
@@ -293,6 +294,38 @@ Draw& Draw::put(std::string_view s, ushort mode)
     m_span = m_canvas.m_width;
     m_keep = Keep::Default;
     m_pad_left = m_pad_right = 0;
+    return *this;
+}
+
+Draw& Draw::put_with_suffix(std::string_view s, char suffix, uint32_t suffix_fg,
+    ushort mode)
+{
+    assert( m_align == Align::Left && m_pad_left == 0 && m_pad_right == 0 );
+
+    const int xend = std::min(m_x + m_span, m_canvas.m_width);
+    const int span = xend - m_x;
+    assert( span > 0 );
+
+    int dot_cp_idx;
+    ptrdiff_t dot_byte_off;
+    const int text_width = scan_ext(s, &dot_cp_idx, &dot_byte_off);
+    const bool fits = text_width < span;
+
+    // Give fitting text exactly its own width; on overflow, reserve the final cell so
+    // the type indicator survives the same ellipsis policy as the entry name.
+    m_span = fits ? text_width : span - 1;
+    if ( fits ) m_keep = Keep::Default;
+    put(s, mode);
+
+    const uint32_t text_fg = m_fg;
+    m_fg = suffix_fg;
+    put(suffix, mode);
+    m_fg = text_fg;
+
+    if ( mode & ATTR_CLEAR_FIELD )
+        while ( m_x < xend ) put(' ', mode);
+    else
+        m_x = xend;
     return *this;
 }
 

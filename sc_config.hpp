@@ -59,6 +59,7 @@ constexpr uint32_t kFgDefault   = 7;
 constexpr uint32_t kBgDefault   = 4;
 constexpr uint32_t kFgSelected  = 3;
 constexpr uint32_t kFgFrame     = 6;
+constexpr uint32_t kFgIndicator = 6;  // /, @, >, !
 
 // ----- frame glyphs (Unicode box drawing) -----------------------------------
 // The outer panel boundary is double-lined; interior table rules stay single-lined.

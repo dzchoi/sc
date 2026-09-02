@@ -65,6 +65,11 @@ public:
     // cursor and clears `m_span`.
     Draw& put(std::string_view s, ushort mode = ATTR_NULL);
 
+    // Puts a suffix immediately after left-aligned text, retaining the suffix when the
+    // field is ellipsized and drawing it with a distinct foreground colour.
+    Draw& put_with_suffix(std::string_view s, char suffix, uint32_t suffix_fg,
+        ushort mode = ATTR_NULL);
+
     // Fills the whole field with a repeated glyph.
     Draw& fill(Rune u, ushort mode = ATTR_NULL);
 

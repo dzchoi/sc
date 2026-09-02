@@ -22,9 +22,9 @@ bool Comm::any_panel_visible()
     return !m_hidden && m_focus->canvas().height() > 0 && shell_owns_pty();
 }
 
-void Comm::reload_panels(bool init)
+void Comm::reload_panels(bool init, std::string_view logical_cwd)
 {
-    PanelDirectory directory = m_shell.capture_cwd();
+    PanelDirectory directory = m_shell.capture_cwd(logical_cwd);
 
     // The first preprompt establishes both panels' directory and snapshot invariants.
     // Later boundaries update only the focused panel, preserving the inactive panel's

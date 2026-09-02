@@ -95,8 +95,10 @@ pending resize deadline into `pselect()` so the loop wakes even while otherwise 
 ## Cross-subsystem control flow
 
 The first successful `preprompt` request is the initialization boundary: the Zsh
-adapter is ready, both panels own valid directory descriptors, and both snapshots are
-nonempty. Normal panel polling and input handling begin only afterward.
+adapter is ready, both panels own valid directory descriptors and display paths, and
+both snapshots are nonempty. The descriptor remains authoritative; each capture keeps
+the logical path only when it identifies that inode and otherwise stores the pathname
+reported by procfs. Normal panel polling and input handling begin only afterward.
 
 At runtime, `Comm` routes global keys before `Panel` sees pane-local selection keys.
 Shell-dependent actions cross the PTY as fixed ZLE events; Zsh then uses the private

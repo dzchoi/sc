@@ -10,7 +10,9 @@ restoration, and shell-facing paths, but it is not the authority for directory i
 `PanelDirectory` is the move-only owner of two related values:
 
 - an `O_PATH | O_DIRECTORY | O_CLOEXEC` descriptor that pins the directory inode;
-- a slash-terminated display cwd derived from that descriptor through procfs.
+- a slash-terminated display cwd that retains Zsh's logical `$PWD` (without
+  canonicalizing symlinks) while that pathname resolves to the pinned inode, then falls
+  back to the pathname procfs reports for the descriptor.
 
 The descriptor is closed when the handle is replaced or destroyed. Moving transfers
 ownership and invalidates the source; copying is prohibited. `Panel` is non-movable
@@ -30,25 +32,27 @@ later refer to a different inode.
 
 ## Capturing the shell directory
 
-At every preprompt boundary, `Shell::capture_cwd()` opens
-`/proc/<shell-pid>/cwd` before it reads a pathname. It then reads
-`/proc/self/fd/<new-fd>` to derive the display cwd from the exact inode represented by
-the new handle:
+At every preprompt boundary, Zsh sends its logical `$PWD` and `Shell::capture_cwd()`
+opens `/proc/<shell-pid>/cwd`. `PanelDirectory` compares that pathname's inode with the
+new descriptor and retains it only on a match. Otherwise it derives the display cwd
+from `/proc/<sc-pid>/fd/<new-fd>`:
 
 ```text
-/proc/<shell-pid>/cwd
-        │ open(O_PATH | O_DIRECTORY | O_CLOEXEC)
-        ▼
-  retained descriptor ── readlink(/proc/self/fd/<fd>) ──► display cwd
+Zsh $PWD ───── stat() ───────────────┐
+                                     ├─ same inode ─► logical display cwd
+/proc/<shell-pid>/cwd ── open() ─► retained descriptor
+                                     └─ mismatch ───► procfs-reported display cwd
 ```
 
-Opening first prevents a shell-directory change or pathname replacement from pairing a
-descriptor for one directory with the name of another. Linux appends ` (deleted)` to
-the procfs link target after the directory is unlinked, so the panel title reflects the
-invalidated pathname without sacrificing access to the inode.
+The descriptor remains authoritative. Validation prevents a shell-directory change or
+pathname replacement from pairing one directory's handle with another directory's
+name. Linux appends ` (deleted)` to the procfs fallback after the directory is unlinked,
+so the panel title reflects the invalidated pathname without sacrificing inode access.
 
 The focused panel adopts this newly captured handle during preprompt. The inactive
-panel keeps its existing handle and snapshot until it is focused again.
+panel keeps its existing handle, logical name, and snapshot until it is focused again.
+Panel switching uses that logical name while it still resolves to the retained inode;
+otherwise it enters the descriptor through procfs with physical `cd` semantics.
 
 ## Reloading entries
 
@@ -56,12 +60,14 @@ panel keeps its existing handle and snapshot until it is focused again.
 retained descriptor, converts that scanning descriptor to a `DIR*`, and enumerates it
 with `readdir()`. Entry metadata is read with descriptor-relative `fstatat()` and
 `AT_SYMLINK_NOFOLLOW`, so a renamed or replaced pathname cannot redirect a reload to a
-different directory.
+different directory. Symlinks receive one additional descriptor-relative lookup that
+follows the link, distinguishing directory targets from other targets and unresolved
+links without changing the metadata recorded for the link itself.
 
 Synthetic `..` is inserted before scanning and remains even when the directory cannot
 be scanned or has been unlinked and emptied. Metadata lookup failure retains the name
-with non-directory/zero defaults, matching the panel's role as a cached presentation;
-Zsh validates a selected live entry before navigation.
+with file/zero defaults, matching the panel's role as a cached presentation; Zsh
+validates a selected live entry before navigation.
 
 Before replacing a panel handle, `Panel::reload()` compares `st_dev` and `st_ino` for
 the old and new descriptors:
@@ -84,9 +90,9 @@ Tab retains the existing SC-first control flow:
 ```text
 Tab
   → Comm changes focus and sends the SwitchPanel ZLE event
-  → _sc_switch_panel requests focused_directory
-  → SC replies /proc/<sc-pid>/fd/<focused-panel-fd>
-  → Zsh runs builtin cd -P -- <reply>
+  → _sc_switch_panel requests directory_for_shell
+  → SC replies L<logical-cwd> while it names the inode, otherwise P<procfs-path>
+  → Zsh runs logical cd for L or physical cd for P
   → preprompt captures the shell cwd and reloads the focused panel
 ```
 
@@ -94,17 +100,19 @@ The focused panel descriptor is valid by invariant, including after unlink, so p
 switching is not a conditional or transactional focus operation. SC does not silently
 select an existing ancestor and does not roll focus back.
 
-`focused_directory` exposes the procfs path only as a control-protocol navigation
-target. `_sc_switch_panel` uses physical `cd` so Zsh resolves the procfs magic link
-before establishing its cwd. Consequently:
+`directory_for_shell` exposes the procfs path only as a fallback control-protocol
+navigation target. A valid logical cwd keeps the panel and Zsh path spelling aligned.
+When that cwd no longer names the inode, `_sc_switch_panel` uses physical `cd` so Zsh
+resolves the procfs magic link before establishing its cwd. Consequently:
 
-- `/proc/<sc-pid>/fd/...` does not become the shell's logical directory;
+- logical symlink aliases survive panel switches while they remain valid;
+- a fallback `/proc/<sc-pid>/fd/...` does not become the shell's logical directory;
 - the shell enters the pinned directory inode even when its pathname is gone;
 - relative `cd ..` follows that inode's real parent instead of `/proc/<sc-pid>/fd`.
 
-Only panel switching requests physical resolution. Ordinary `_sc_cd` calls and
-user-entered `cd` retain the user's normal logical/physical symlink behavior; SC does
-not override the global `cd` function.
+Only the invalid-logical-path fallback requests physical resolution. Ordinary
+`_sc_cd` calls, valid panel switches, and user-entered `cd` retain their normal logical
+symlink behavior; SC does not override the global `cd` function.
 
 ## Unlinked-directory lifecycle
 
