@@ -258,6 +258,8 @@ next panel switch updates it.
 ## Current limitations
 
 - SC supports Linux, X11, and interactive zsh sessions.
+- Panel text omits zero-width Unicode code points, including combining marks and
+  zero-width joiners. One- and two-cell characters remain aligned to the terminal grid.
 - Panels show local filesystem directories; archive and virtual filesystem browsing
   are not supported yet.
 - Directory contents refresh when the shell returns to a prompt, not continuously

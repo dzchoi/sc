@@ -50,15 +50,17 @@ public:
     // with a mid-string ellipsis ('…' U+2026) instead of a hard cut: Keep::Left/Right/
     // Mid keep the head/tail/middle slice (one ellipsis, in place of the discarded
     // part); Keep::Both keeps the head and, if the text has a short extension (<=
-    // kMaxLenExt chars after the last '.', ignoring a leading dot as in ".bashrc"), the
-    // extension too (one ellipsis in between, dot dropped) - with no usable extension,
-    // Keep::Both behaves like Keep::Left. Once given, ellipsize() decides the cut on
-    // its own; left()/mid()/right() then only affect where the text sits when it *fits*
-    // the field.
+    // kMaxLenExt cells after the last '.', ignoring a leading dot as in ".bashrc"), the
+    // extension too (one ellipsis in between) when the complete extension and at least
+    // one basename rune fit. Its dot is normally dropped, but fills a cell that cannot
+    // hold the prefix's next double-width rune. With no usable extension, Keep::Both
+    // behaves like Keep::Left. Once given, ellipsize() decides the cut on its own;
+    // left()/mid()/right() then only affect where the text sits when it *fits* the field.
     enum class Keep { Default, Left, Mid, Right, Both };
     Draw& ellipsize(Keep keep) { m_keep = keep; return *this; }
 
-    // Puts a single glyph at (m_x, m_y).
+    // Puts a rune at (m_x, m_y), occupying one or two cells. Zero-width runes are
+    // omitted because Canvas stores one drawable rune per occupied terminal cell.
     Draw& put(Rune u, ushort mode = ATTR_NULL);
 
     // Puts a UTF-8 text at (m_x, m_y) in a field (`m_span` cells wide); then advances
@@ -70,7 +72,7 @@ public:
     Draw& put_with_suffix(std::string_view s, char suffix, uint32_t suffix_fg,
         ushort mode = ATTR_NULL);
 
-    // Fills the whole field with a repeated glyph.
+    // Fills the whole field with a repeated one-cell rune.
     Draw& fill(Rune u, ushort mode = ATTR_NULL);
 
     // Changes the color temporarily. E.g. draw.with_fg(3, [](Draw& d){ d.put("..."); })

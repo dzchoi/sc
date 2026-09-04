@@ -155,3 +155,8 @@ cwd, editable buffer, command execution, and prompt.
   the alternate-screen cursor; `rmcup` lets the terminal restore the shell cursor.
   `make install` compiles `st.info` with `tic`, while `make` alone leaves the user's
   installed terminfo database unchanged.
+- Keep panel and terminal text on the same occupied-cell width contract. `Canvas`
+  distinguishes one- and two-cell runes and emits the wide-glyph and continuation
+  attributes expected by the X renderer because panel glyphs bypass `tsetchar()`.
+  Zero-width runes are omitted because the canvas stores one drawable rune per occupied
+  cell rather than grapheme clusters.

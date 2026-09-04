@@ -24,7 +24,7 @@ constexpr int kColsTime     = 6;  // "HH:MMp"
 constexpr int kRowsPanelFrame = 5;  // header (2) + footer (3)
 constexpr int kMinRowsPanel = kRowsPanelFrame + 1;  // + one entry row
 
-constexpr int kMaxLenExt    = 5;
+constexpr int kMaxLenExt    = 5;   // Maximum extension width retained during clipping.
 
 // ----- Panel geometry defaults -----
 constexpr int kFracHeight   = 2;   // panel takes (N - 1) / N of terminal rows

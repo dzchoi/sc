@@ -1,6 +1,7 @@
 #include <algorithm>            // for std::min()
 #include <cassert>              // for assert()
 #include <cstddef>              // for ptrdiff_t, size_t
+#include <cwchar>               // for wcwidth()
 
 #include "canvas.hpp"           // for Canvas, Draw
 #include "sc_config.hpp"        // for SC configuration constants
@@ -10,6 +11,12 @@ extern "C" {
 }
 
 
+
+static inline int rune_width(Rune u)
+{
+    const int width = ::wcwidth(static_cast<wchar_t>(u));
+    return width < 0 ? 1 : width;
+}
 
 // Minimal UTF-8 decoder. Returns bytes consumed; writes a code point (unicode char) to
 // *out. Never reads past `pend`, and never reports a length that would run past it
@@ -44,14 +51,13 @@ static int utf8_next(const unsigned char* p, const unsigned char* pend, Rune* ou
     return 1;
 }
 
-// Scans a whole UTF-8 string in one pass: counts how many code points `s` contains,
-// and finds the last '.' code point in `s` (if any) to abbreviate around. Returns the
-// code point count. If a dot is found, *dot_cp_idx and *dot_byte_off are set to its
-// position (code point index and byte offset, respectively); otherwise *dot_cp_idx is
-// left at -1.
-static int scan_ext(std::string_view s, int* dot_cp_idx, ptrdiff_t* dot_byte_off)
+// Scans a whole UTF-8 string in one pass: counts how many cells `s` occupies, and finds
+// the last '.' cell in `s` (if any) to abbreviate around. Returns the cell count. If a
+// dot is found, *dot_cell_idx and *dot_byte_off are set to its position (cell index and
+// byte offset, respectively); otherwise *dot_cell_idx is left at -1.
+static int scan_ext(std::string_view s, int* dot_cell_idx, ptrdiff_t* dot_byte_off)
 {
-    *dot_cp_idx = -1;
+    *dot_cell_idx = -1;
     *dot_byte_off = -1;
 
     const auto* base = reinterpret_cast<const unsigned char*>(s.data());
@@ -63,18 +69,17 @@ static int scan_ext(std::string_view s, int* dot_cp_idx, ptrdiff_t* dot_byte_off
         Rune u;
         p += utf8_next(p, pend, &u);
         if ( u == '.' ) {
-            *dot_cp_idx = n;
+            *dot_cell_idx = n;
             *dot_byte_off = p0 - base;
         }
-        ++n;
+        n += rune_width(u);
     }
     return n;
 }
 
-// Code-point length of a short extension worth preserving after a '.' at code-point
-// index `dot_idx` (or -1 if there's no dot), out of `n` total code points; 0 if there's
-// no usable extension (no dot, a leading dot as in ".bashrc", or longer than
-// kMaxLenExt).
+// Cell width of a short extension worth preserving after a '.' at cell index `dot_idx`
+// (or -1 if there's no dot), out of `n` total cells; 0 if there's no usable extension
+// (no dot, a leading dot as in ".bashrc", or wider than kMaxLenExt).
 static int ext_len(int dot_idx, int n)
 {
     if ( dot_idx <= 0 ) return 0;
@@ -98,14 +103,21 @@ Draw& Draw::pad(int left, int right)
 
 Draw& Draw::put(Rune u, ushort mode)
 {
-    assert( m_y >= 0 && m_y < m_canvas.m_height && m_x >= 0 && m_x < m_canvas.m_width );
-    m_canvas.cell(m_y, m_x++) = Glyph{u, mode, m_fg, m_bg};
+    const int width = rune_width(u);
+    assert( m_y >= 0 && m_y < m_canvas.m_height
+        && m_x >= 0 && m_x + width <= m_canvas.m_width );
+    if ( width == 0 ) return *this;
+
+    m_canvas.cell(m_y, m_x++) =
+        Glyph{u, static_cast<ushort>(width == 2 ? mode | ATTR_WIDE : mode), m_fg, m_bg};
+    if ( width == 2 )
+        m_canvas.cell(m_y, m_x++) = Glyph{0, ATTR_WDUMMY, m_fg, m_bg};
     return *this;
 }
 
 Draw& Draw::fill(Rune u, ushort mode)
 {
-    assert( m_y >= 0 && m_y < m_canvas.m_height );
+    assert( m_y >= 0 && m_y < m_canvas.m_height && rune_width(u) == 1 );
     const int xend = std::min(m_x + m_span, m_canvas.m_width);
     while ( m_x < xend )
         m_canvas.cell(m_y, m_x++) = Glyph{u, mode, m_fg, m_bg};
@@ -119,41 +131,54 @@ bool Draw::put_left_ellipsized(std::string_view s, int xend, ushort mode)
 {
     if ( xend <= m_x ) return false;
 
-    int dot_cp_idx;
+    int dot_cell_idx;
     ptrdiff_t dot_byte_off;
-    const int n_cps = scan_ext(s, &dot_cp_idx, &dot_byte_off);
+    const int text_width = scan_ext(s, &dot_cell_idx, &dot_byte_off);
     const int span = xend - m_x;
-    if ( n_cps <= span ) return false;  // fits; let the caller stream it normally
-
-    // Doesn't fit: emit a prefix, an ellipsis, and (if Keep::Both and short enough) the
-    // extension minus its dot, all in a single left-to-right pass.
-    bool m_keepext = false;
-    int l_prefix = span - 1;  // budget with ellipsis only
-    if ( m_keep == Keep::Both ) {
-        const int l_ext = ext_len(dot_cp_idx, n_cps);
-        const int budget = span - l_ext - 1;  // ellipsis + extension
-        if ( budget >= 0 ) {
-            m_keepext = true;
-            l_prefix = budget;
-        }
-    }
+    if ( text_width <= span ) return false;  // fits; let the caller stream it normally
 
     const auto* p = reinterpret_cast<const unsigned char*>(s.data());
     const auto* pend = p + s.size();
-    for ( int i = 0 ; i < l_prefix && p < pend ; ++i ) {
-        Rune u;
-        p += utf8_next(p, pend, &u);
-        m_canvas.cell(m_y, m_x++) = Glyph{u, mode, m_fg, m_bg};
+
+    // Doesn't fit: emit a prefix, an ellipsis, and (if Keep::Both and short enough) the
+    // extension, normally without its dot, all in a single left-to-right pass.
+    bool keep_ext = false;
+    int l_prefix = span - 1;  // budget with ellipsis only
+    if ( m_keep == Keep::Both ) {
+        if ( const int l_ext = ext_len(dot_cell_idx, text_width); l_ext > 0 ) {
+            const int budget = span - l_ext - 1;  // ellipsis + extension
+            Rune first;
+            const auto* q = p;
+            // Overflow guarantees an occupied rune after omitted zero-width runes.
+            do q += utf8_next(q, pend, &first);
+            while ( rune_width(first) == 0 );
+            if ( budget >= rune_width(first) ) {
+                keep_ext = true;
+                l_prefix = budget;
+            }
+        }
     }
 
-    m_canvas.cell(m_y, m_x++) = Glyph{kEllipsis, mode, m_fg, m_bg};
+    const int prefix_end = m_x + l_prefix;
+    while ( p < pend ) {
+        Rune u;
+        p += utf8_next(p, pend, &u);
+        if ( m_x + rune_width(u) > prefix_end ) break;
+        put(u, mode);
+    }
 
-    if ( m_keepext ) {
+    // If a double-width rune could not consume the prefix's final cell, retain the
+    // extension's dot there instead of leaving a trailing blank in the field.
+    const bool keep_dot = keep_ext && m_x < prefix_end;
+    m_canvas.cell(m_y, m_x++) = Glyph{kEllipsis, mode, m_fg, m_bg};
+    if ( keep_dot ) m_canvas.cell(m_y, m_x++) = Glyph{'.', mode, m_fg, m_bg};
+
+    if ( keep_ext ) {
         p = reinterpret_cast<const unsigned char*>(s.data()) + dot_byte_off + 1;  // skip '.'
-        while ( p < pend && m_x < xend ) {
+        while ( p < pend ) {
             Rune u;
             p += utf8_next(p, pend, &u);
-            m_canvas.cell(m_y, m_x++) = Glyph{u, mode, m_fg, m_bg};
+            put(u, mode);
         }
     }
     return true;
@@ -193,7 +218,8 @@ Draw& Draw::put(std::string_view s, ushort mode)
             while ( p < pend && m_x < xend ) {
                 Rune u;
                 p += utf8_next(p, pend, &u);
-                m_canvas.cell(m_y, m_x++) = Glyph{u, mode, m_fg, m_bg};
+                if ( m_x + rune_width(u) > xend ) break;
+                put(u, mode);
             }
         }
 
@@ -204,11 +230,16 @@ Draw& Draw::put(std::string_view s, ushort mode)
         // Padding, right/mid alignment, and a Left field with a Mid/Right ellipsize()
         // all require the text's total width, so decode them fully first.
         std::vector<Glyph> buf;
-        buf.reserve(s.size());  // upper bound on code point count; never overflows
+        buf.reserve(s.size());  // upper bound on cell count; never overflows
         while ( p < pend ) {
             Rune u;
             p += utf8_next(p, pend, &u);
-            buf.push_back(Glyph{u, mode, m_fg, m_bg});
+            const int width = rune_width(u);
+            if ( width == 0 ) continue;
+            buf.push_back(Glyph{u,
+                static_cast<ushort>(width == 2 ? mode | ATTR_WIDE : mode), m_fg, m_bg});
+            if ( width == 2 )
+                buf.push_back(Glyph{0, ATTR_WDUMMY, m_fg, m_bg});
         }
 
         const int n = static_cast<int>(buf.size());
@@ -242,11 +273,18 @@ Draw& Draw::put(std::string_view s, ushort mode)
         else if ( m_keep == Keep::Default ) {
             // Overflow, no ellipsis: hard-cut per m_align's own implicit direction.
             // (An unpadded Align::Left never reaches here with Keep::Default.)
-            const int skip =
+            int skip =
                 (m_align == Align::Right) ? n - inner_span :
                 (m_align == Align::Mid) ? (n - inner_span) / 2 : 0;
-            for ( int i = skip ; i < n && m_x < inner_xend ; ++i )
+            if ( skip < n && buf[skip].mode == ATTR_WDUMMY ) {
+                ++skip;
+                if ( m_align == Align::Right )
+                    m_canvas.cell(m_y, m_x++) = Glyph{' ', mode, m_fg, m_bg};
+            }
+            for ( int i = skip ; i < n && m_x < inner_xend ; ++i ) {
+                if ( (buf[i].mode & ATTR_WIDE) && m_x + 1 >= inner_xend ) break;
                 m_canvas.cell(m_y, m_x++) = buf[i];
+            }
         }
 
         else {
@@ -262,24 +300,40 @@ Draw& Draw::put(std::string_view s, ushort mode)
                 for ( int i = 0 ; i < n ; ++i )
                     if ( buf[i].u == '.' ) dot_idx = i;
                 l_ext = ext_len(dot_idx, n);
-                if ( l_ext > 0 )
+                if ( l_ext > 0 && inner_span - l_ext - 1 >= rune_width(buf[0].u) )
                     ext_idx = dot_idx + 1;
+                else
+                    l_ext = 0;
             }
 
             int budget = inner_span - head_cut - tail_cut - l_ext;
             if ( budget < 0 ) budget = 0;
-            const int start =
+            int start =
                 (m_keep == Keep::Right) ? n - budget :
                 (m_keep == Keep::Mid) ? (n - budget) / 2 : 0;
 
+            const bool split_head = budget > 0 && buf[start].mode == ATTR_WDUMMY;
+            if ( split_head ) {
+                ++start;
+                --budget;
+            }
+
             if ( head_cut && m_x < inner_xend )
                 m_canvas.cell(m_y, m_x++) = Glyph{kEllipsis, mode, m_fg, m_bg};
-            for ( int i = 0 ; i < budget && m_x < inner_xend ; ++i )
+            if ( split_head && m_x < inner_xend )
+                m_canvas.cell(m_y, m_x++) = Glyph{' ', mode, m_fg, m_bg};
+            for ( int i = 0 ; i < budget ; ++i ) {
+                if ( (buf[start + i].mode & ATTR_WIDE) && i + 1 >= budget ) break;
                 m_canvas.cell(m_y, m_x++) = buf[start + i];
+            }
             if ( tail_cut && m_x < inner_xend ) {
+                const bool keep_dot =
+                    ext_idx >= 0 && m_x < inner_xend - l_ext - 1;
                 m_canvas.cell(m_y, m_x++) = Glyph{kEllipsis, mode, m_fg, m_bg};
+                if ( keep_dot )
+                    m_canvas.cell(m_y, m_x++) = Glyph{'.', mode, m_fg, m_bg};
                 if ( ext_idx >= 0 )
-                    for ( int i = ext_idx ; i < n && m_x < inner_xend ; ++i )
+                    for ( int i = ext_idx ; i < n ; ++i )
                         m_canvas.cell(m_y, m_x++) = buf[i];
             }
         }
@@ -306,9 +360,9 @@ Draw& Draw::put_with_suffix(std::string_view s, char suffix, uint32_t suffix_fg,
     const int span = xend - m_x;
     assert( span > 0 );
 
-    int dot_cp_idx;
+    int dot_cell_idx;
     ptrdiff_t dot_byte_off;
-    const int text_width = scan_ext(s, &dot_cp_idx, &dot_byte_off);
+    const int text_width = scan_ext(s, &dot_cell_idx, &dot_byte_off);
     const bool fits = text_width < span;
 
     // Give fitting text exactly its own width; on overflow, reserve the final cell so
