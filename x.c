@@ -105,6 +105,7 @@ typedef struct {
 		XIC xic;
 		XPoint spot;
 		XVaNestedList spotlist;
+		XVaNestedList preeditattrs;
 	} ime;
 	Draw draw;
 	Visual *vis;
@@ -156,6 +157,10 @@ static int ximopen(Display *);
 static void ximinstantiate(Display *, XPointer, XPointer);
 static void ximdestroy(XIM, XPointer, XPointer);
 static int xicdestroy(XIC, XPointer, XPointer);
+static void xpreeditstart(XIM, XPointer, XPointer);
+static void xpreeditdone(XIM, XPointer, XPointer);
+static void xpreeditdraw(XIM, XPointer, XIMPreeditDrawCallbackStruct *);
+static void xpreeditcaret(XIM, XPointer, XIMPreeditCaretCallbackStruct *);
 static void xinit(int, int);
 static void cresize(int, int);
 static void xresize(int, int);
@@ -1103,6 +1108,16 @@ ximopen(Display *dpy)
 {
 	XIMCallback imdestroy = { .client_data = NULL, .callback = ximdestroy };
 	XICCallback icdestroy = { .client_data = NULL, .callback = xicdestroy };
+	static XIMCallback pestart = { NULL, xpreeditstart };
+	static XIMCallback pedone  = { NULL, xpreeditdone };
+	static XIMCallback pedraw  = { NULL, (XIMProc)xpreeditdraw };
+	static XIMCallback pecaret = { NULL, (XIMProc)xpreeditcaret };
+	XIMStyles *styles;
+	XIMStyle candidates[] = {
+		XIMPreeditCallbacks | XIMStatusNothing,
+		XIMPreeditNothing | XIMStatusNothing
+	};
+	int i, j;
 
 	xw.ime.xim = XOpenIM(xw.dpy, NULL, NULL, NULL);
 	if (xw.ime.xim == NULL)
@@ -1115,12 +1130,38 @@ ximopen(Display *dpy)
 	xw.ime.spotlist = XVaCreateNestedList(0, XNSpotLocation, &xw.ime.spot,
 	                                      NULL);
 
+	if (XGetIMValues(xw.ime.xim, XNQueryInputStyle, &styles, NULL)) {
+		fprintf(stderr, "XGetIMValues:"
+				"Could not get XNQueryInputStyle.\n");
+		return 1;
+	}
+	for (i = 0; i < LEN(candidates); i++)
+		for (j = 0; j < styles->count_styles; j++)
+			if (candidates[i] == styles->supported_styles[j])
+				goto match;
+	fprintf(stderr, "XGetIMValues: "
+	                "None of the candidates styles matched.\n");
+	XFree(styles);
+	return 1;
+match:
+	XFree(styles);
+
 	if (xw.ime.xic == NULL) {
 		xw.ime.xic = XCreateIC(xw.ime.xim, XNInputStyle,
-		                       XIMPreeditNothing | XIMStatusNothing,
+		                       candidates[i],
 		                       XNClientWindow, xw.win,
 		                       XNDestroyCallback, &icdestroy,
 		                       NULL);
+		if (xw.ime.xic && candidates[i] & XIMPreeditCallbacks) {
+			xw.ime.preeditattrs = XVaCreateNestedList(0,
+					XNPreeditStartCallback, &pestart,
+					XNPreeditDoneCallback,  &pedone,
+					XNPreeditDrawCallback,  &pedraw,
+					XNPreeditCaretCallback, &pecaret,
+					NULL);
+			XSetICValues(xw.ime.xic, XNPreeditAttributes,
+					xw.ime.preeditattrs, NULL);
+		}
 	}
 	if (xw.ime.xic == NULL)
 		fprintf(stderr, "XCreateIC: Could not create input context.\n");
@@ -1149,7 +1190,61 @@ int
 xicdestroy(XIC xim, XPointer client, XPointer call)
 {
 	xw.ime.xic = NULL;
+	XFree(xw.ime.preeditattrs);
+	xw.ime.preeditattrs = NULL;
 	return 1;
+}
+
+void
+xpreeditstart(XIM xim, XPointer client, XPointer call)
+{
+	pereset();
+}
+
+void
+xpreeditdone(XIM xim, XPointer client, XPointer call)
+{
+	pereset();
+}
+
+void
+xpreeditdraw(XIM xim, XPointer client, XIMPreeditDrawCallbackStruct *call)
+{
+	const XIMText *text = call->text;
+	ushort *m, *modes = NULL;
+	int i;
+	XIMFeedback fb;
+
+	if (!text) {
+		peupdate(call->caret, call->chg_first, call->chg_length,
+				0, NULL, NULL);
+		return;
+	}
+
+	if (text->feedback) {
+		modes = xmalloc(text->length * sizeof(ushort));
+		for (i = 0; i < text->length; i++) {
+			m = modes + i;
+			fb = text->feedback[i];
+			*m = ATTR_NULL;
+			*m |= fb & XIMReverse   ? ATTR_REVERSE    : ATTR_NULL;
+			*m |= fb & XIMUnderline ? ATTR_UNDERLINE  : ATTR_NULL;
+			*m |= fb & XIMHighlight ? ATTR_BOLD       : ATTR_NULL;
+			*m |= fb & XIMPrimary   ? ATTR_ITALIC     : ATTR_NULL;
+			*m |= fb & XIMSecondary ? ATTR_FAINT      : ATTR_NULL;
+			*m |= fb & XIMTertiary  ? ATTR_BOLD_FAINT : ATTR_NULL;
+		}
+	}
+	peupdate(call->caret, call->chg_first, call->chg_length,
+			text->length, modes, text->string.multi_byte);
+
+	free(modes);
+}
+
+void
+xpreeditcaret(XIM xim, XPointer client, XIMPreeditCaretCallbackStruct *call)
+{
+	peupdate(call->position, 0, 0, 0, NULL, NULL);
 }
 
 void
@@ -1750,6 +1845,35 @@ xdrawline(Line line, int x1, int y1, int x2)
 	}
 	if (i > 0)
 		xdrawglyphfontspecs(specs, base, i, ox, y1);
+}
+
+void
+xdrawpreedit(PLine *pl, Line base, int y, int col)
+{
+	int head, tail;
+	int tcur;
+	const int offc = pl->offset + pl->caret;
+
+	if (pl->width == 0 || !(win.mode & MODE_FOCUSED))
+		return;
+
+	xdrawline(base, 0, y, col);
+
+	head = MAX(pl->offset, 0);
+	tail = MIN(pl->offset + pl->width, col);
+	if (pl->line[head].mode & ATTR_WDUMMY)
+		head++;
+	xdrawline(pl->line, head, y, tail);
+
+	tcur = win.cursor;
+	win.cursor = 6;
+	xdrawcursor(offc, y, pl->line[offc], head, y, pl->line[head]);
+	win.cursor = tcur;
+
+	if (pl->offset < 0)
+		xdrawline(&pl->l, 0, y, 1);
+	if (col < pl->offset + pl->width)
+		xdrawline(&pl->r - (col - 1), col - 1, y, col);
 }
 
 void
