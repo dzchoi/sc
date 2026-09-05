@@ -114,6 +114,12 @@ typedef struct {
 	int alt;
 } Selection;
 
+typedef struct {
+	Glyph *text;   /* preedit text */
+	int len;       /* text length */
+	PLine pline;
+} Preedit;
+
 /* Internal representation of the screen */
 typedef struct {
 	int row;      /* nb row */
@@ -210,6 +216,7 @@ static int32_t tdefcolor(const int *, int *, int);
 static void tdeftran(char);
 static void tstrsequence(uchar);
 
+static void pelineupdate(void);
 static void drawregion(int, int, int, int);
 
 static void selnormalize(void);
@@ -229,6 +236,7 @@ static ssize_t xwrite(int, const char *, size_t);
 /* Globals */
 static Term term;
 static Selection sel;
+static Preedit preedit;
 static CSIEscape csiescseq;
 static STREscape strescseq;
 static int iofd = 1;
@@ -1272,6 +1280,9 @@ tmoveto(int x, int y)
 	term.c.state &= ~CURSOR_WRAPNEXT;
 	term.c.x = LIMIT(x, 0, term.col-1);
 	term.c.y = LIMIT(y, miny, maxy);
+
+	if (preedit.len > 0)
+		pelineupdate();
 }
 
 void
@@ -2793,6 +2804,119 @@ resettitle(void)
 }
 
 void
+pereset(void)
+{
+	free(preedit.text);
+	preedit.text = NULL;
+	preedit.len = 0;
+	preedit.pline.width = 0;
+	pelineupdate();
+}
+
+void
+peupdate(int caret, int chg_fst, int chg_len,
+		unsigned short str_len, const ushort *modes, const char *str)
+{
+	int i;
+	int defmode;
+	Glyph *text, *g;
+	int chg_last, len;
+
+	chg_fst  = MIN(chg_fst,  preedit.len);
+	chg_len  = MIN(chg_len,  preedit.len - chg_fst);
+	chg_last = chg_fst + chg_len;
+	len = preedit.len - chg_len + (str ? str_len : 0);
+
+	/* default glyph mode */
+	defmode = ATTR_NULL;
+	if (preedit.len > 0)
+		defmode = (chg_fst < preedit.len) ?
+			preedit.text[chg_fst].mode :
+			preedit.text[chg_fst - 1].mode;
+	defmode &= ~ATTR_WIDE;
+
+	/* create new text and copy old glyphs */
+	text = len > 0 ? xmalloc(len * sizeof(Glyph)) : NULL;
+	if (preedit.len > 0) {
+		if (chg_fst > 0)
+			memcpy(text, preedit.text, chg_fst * sizeof(Glyph));
+		if (chg_last < preedit.len)
+			memcpy(text + chg_fst + (str ? str_len : 0),
+					preedit.text + chg_last,
+					(preedit.len - chg_last) * sizeof(Glyph));
+		free(preedit.text);
+	}
+	preedit.text = text;
+	preedit.len = len;
+
+	/* new glyphs */
+	if (str) {
+		for (i = 0; i < str_len; i++) {
+			g = text + chg_fst + i;
+			*g = (Glyph){ 0, defmode, defaultfg, defaultbg };
+			str += utf8decode(str, &g->u, UTF_SIZ);
+			if (wcwidth(g->u) > 1)
+				g->mode |= ATTR_WIDE;
+		}
+	}
+
+	/* glyph mode */
+	if (modes) {
+		for (i = 0; i < str_len; i++) {
+			g = text + chg_fst + i;
+			g->mode = modes[i] | (g->mode & ATTR_WIDE);
+		}
+	}
+
+	/* visual width and caret position */
+	preedit.pline.width = 0;
+	preedit.pline.caret = 0;
+	for (i = 0; i < len; i++) {
+		preedit.pline.width += MAX(wcwidth(text[i].u), 1);
+		if (i + 1 == caret)
+			preedit.pline.caret = preedit.pline.width;
+	}
+
+	pelineupdate();
+}
+
+static void
+pelineupdate(void)
+{
+	int i, x;
+
+	free(preedit.pline.line);
+	preedit.pline.line = xmalloc((term.col + 1) * sizeof(Glyph));
+	for (i = 0; i < term.col + 1; i++)
+		preedit.pline.line[i] = (Glyph){ ' ', ATTR_WDUMMY };
+
+	x = term.col / 2 - preedit.pline.caret;
+	x = MIN(x, 0);
+	x = MAX(x, term.col - preedit.pline.width);
+	x = MIN(x, term.c.x);
+	preedit.pline.offset = x;
+
+	for (i = 0; i < preedit.len; i++) {
+		if (term.col < x)
+			break;
+		if (0 <= x)
+			preedit.pline.line[x] = preedit.text[i];
+		x += MAX(wcwidth(preedit.text[i].u), 1);
+	}
+
+	if (preedit.len == 0)
+		term.dirty[term.c.y] = 1;
+
+	if (preedit.pline.l.u == 0) {
+		preedit.pline.l = preedit.pline.r = (Glyph){
+			0, ATTR_REVERSE, defaultfg, defaultbg
+		};
+		utf8decode("<", &preedit.pline.l.u, UTF_SIZ);
+		utf8decode(">", &preedit.pline.r.u, UTF_SIZ);
+	}
+}
+
+void
 drawregion(int x1, int y1, int x2, int y2)
 {
 	int y;
@@ -2827,9 +2951,11 @@ draw(void)
 	panel_poll(term.dirty);
 
 	drawregion(0, 0, term.col, term.row);
-	if (term.scr == 0)
+	if (term.scr == 0) {
 		xdrawcursor(cx, term.c.y, term.line[term.c.y][cx],
 				term.ocx, term.ocy, term.line[term.ocy][term.ocx]);
+		xdrawpreedit(&preedit.pline, term.line[term.c.y], term.c.y, term.col);
+	}
 	term.ocx = cx;
 	term.ocy = term.c.y;
 

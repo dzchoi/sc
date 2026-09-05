@@ -71,6 +71,14 @@ typedef struct {
 
 typedef Glyph *Line;
 
+typedef struct {
+	Line line;
+	int offset;
+	int width;
+	int caret;
+	Glyph l, r;
+} PLine;
+
 typedef union {
 	int i;
 	uint ui;
@@ -106,6 +114,8 @@ int ttynew(const char *, char *, const char *, char **);
 size_t ttyread(void);
 void ttyresize(int, int);
 void ttywrite(const char *, size_t, int);
+void pereset(void);
+void peupdate(int, int, int, unsigned short, const ushort *, const char *);
 
 void resettitle(void);
 
