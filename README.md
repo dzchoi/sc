@@ -291,6 +291,10 @@ branch additionally applies these patches from the
   without gaps. Bold line rendering and pixel-style braille remain opt-in through
   `boxdraw_bold` and `boxdraw_braille` in `config.h`. SC's panel borders use their own
   renderer and are unaffected.
+- [patch: preedit](https://st.suckless.org/patches/preedit/) displays input-method
+  composition at the terminal cursor, including the composition caret and input-method
+  feedback styles. Long compositions remain visible by shifting across the terminal
+  row and marking text clipped at either edge.
 
 ## License
 

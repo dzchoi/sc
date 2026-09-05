@@ -74,7 +74,7 @@ The frame call chain is:
     --> XNextEvent() - dispatches X events (key/mouse/resize/etc.)
     --> [if idle or maxlatency hit] draw() [st.c]
           --> panel_poll(term.dirty)  // before drawregion() clears row-dirty flags
-          --> drawregion() and xdrawcursor()
+          --> drawregion(), xdrawcursor(), and xdrawpreedit()
           --> panel_draw()
 ```
 
@@ -84,7 +84,8 @@ collected does `Comm` snapshot whether visible content or covered terminal rows 
 presentation. This ordering prevents one pane from invalidating a row after the other
 has decided it does not need presentation. `panel_draw()` consumes the shared snapshot
 and presents every visible region. It must remain after terminal drawing so terminal
-output cannot overwrite either overlay during the same frame.
+output and input-method preedit text cannot overwrite either overlay during the same
+frame. Preedit text is presented only at the live screen, alongside the terminal cursor.
 
 `run()` batches activity before falling through to `draw()`: it waits up to
 `minlatency` after initial activity, forces a frame by `maxlatency` under sustained
