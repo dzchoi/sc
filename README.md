@@ -99,8 +99,11 @@ The directory name appears in the panel title, with the user's home directory sh
 logical path, such as `/bin/` when `/bin` links to `/usr/bin`, while that path still
 names the displayed directory. Entries are ordered with `..` first, then directories
 (including symlinks to directories), then files; entries are sorted by name within
-those groups. The columns show the entry name, size or directory marker, modification
-date, and modification time. Directories end in a cyan `/`;
+those groups. A failed listing retains `..` and marks the title as `(unreadable)` when
+opening is denied, `(unavailable)` when opening otherwise fails, or `(incomplete)` when
+enumeration begins but fails. The marker remains visible alongside an existing
+`(deleted)` marker. The columns show the entry name, size or directory marker,
+modification date, and modification time. Directories end in a cyan `/`;
 symlinks end in a cyan `@`, `>`, or `!` for a non-directory target, directory target,
 or unresolved target, respectively, and show `SYMLINK` in the size column. A
 highlighted indicator uses the normal foreground so the entire selected name reverses

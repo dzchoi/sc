@@ -65,9 +65,14 @@ follows the link, distinguishing directory targets from other targets and unreso
 links without changing the metadata recorded for the link itself.
 
 Synthetic `..` is inserted before scanning and remains even when the directory cannot
-be scanned or has been unlinked and emptied. Metadata lookup failure retains the name
-with file/zero defaults, matching the panel's role as a cached presentation; Zsh
-validates a selected live entry before navigation.
+be scanned or has been unlinked and emptied. A failed scan retains its error and marks
+the title as `(unreadable)` when opening is denied, `(unavailable)` when opening
+otherwise fails, or `(incomplete)` when `readdir()` fails. The scan marker precedes the
+title's trailing slash except for root, whose leading slash remains first. An unlinked
+directory can independently report both `(deleted)` and its listing state. Metadata
+lookup failure retains the name with a file type, zero size, and unknown modification
+time, matching the panel's role as a cached presentation; Zsh validates a selected live
+entry before navigation.
 
 Before replacing a panel handle, `Panel::reload()` compares `st_dev` and `st_ino` for
 the old and new descriptors:

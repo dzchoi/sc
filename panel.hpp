@@ -81,6 +81,7 @@ public:
     const Canvas& canvas() const { return m_canvas; }
 
     std::string_view cwd() const { return m_directory.cwd(); }
+
     // Prefixes the shell path with L for a valid logical cwd or P for the procfs
     // fallback, allowing Zsh to choose logical or physical cd semantics.
     std::string directory_for_shell() const;
@@ -128,6 +129,8 @@ private:
     PanelDirectory m_directory;
     // Empty before initialization; afterward always contains at least synthetic "..".
     std::vector<Entry> m_entries;
+    // 0: complete; +errno: unavailable; -errno: incomplete.
+    int m_listing_error = 0;
     int m_selected_idx = 0;        // index into m_entries of the highlighted row
     int m_first_visible_idx = 0;   // index into m_entries of the first visible row
 

@@ -81,11 +81,6 @@ bool PanelDirectory::same_inode(const PanelDirectory& other) const
     return mine.st_dev == theirs.st_dev && mine.st_ino == theirs.st_ino;
 }
 
-std::string PanelDirectory::proc_path() const
-{
-    return "/proc/" + std::to_string(::getpid()) + "/fd/" + std::to_string(m_fd);
-}
-
 bool PanelDirectory::cwd_matches_inode() const
 {
     assert( !m_cwd.empty() && m_cwd.front() == '/' );
@@ -94,11 +89,9 @@ bool PanelDirectory::cwd_matches_inode() const
         && path.st_dev == retained.st_dev && path.st_ino == retained.st_ino;
 }
 
-std::string Panel::directory_for_shell() const
+std::string PanelDirectory::proc_path() const
 {
-    if ( m_directory.cwd_matches_inode() )
-        return "L" + std::string(cwd());
-    return "P" + m_directory.proc_path();
+    return "/proc/" + std::to_string(::getpid()) + "/fd/" + std::to_string(m_fd);
 }
 
 
@@ -191,6 +184,13 @@ static Draw& draw_name(Draw& draw, const Panel::Entry& entry, int width,
 
 
 
+std::string Panel::directory_for_shell() const
+{
+    if ( m_directory.cwd_matches_inode() )
+        return "L" + std::string(cwd());
+    return "P" + m_directory.proc_path();
+}
+
 void Panel::set_geometry(int top, int left, int width, int height, int term_cols)
 {
     // Comm gives both canvases the same top and height. Their disjoint left/width
@@ -236,6 +236,22 @@ void Panel::render()
             const size_t home_len = std::strlen(home);
             if ( title.compare(0, home_len, home) == 0 && title[home_len] == '/' )
                 title.replace(0, home_len, "~");
+        }
+        if ( m_listing_error ) {
+            const char* marker;
+            if ( m_listing_error < 0 )
+                marker = " (incomplete)";
+            else if ( m_listing_error == EACCES || m_listing_error == EPERM )
+                marker = " (unreadable)";
+            else
+                marker = " (unavailable)";
+
+            // PanelDirectory guarantees a slash-terminated display cwd. Keep that slash
+            // last when adding status, including after procfs's " (deleted)" suffix.
+            if ( title.size() > 1 )
+                title.insert(title.size() - 1, marker);
+            else
+                title += marker;  // e.g. "/ (unavailable)"
         }
 
         // --- Row 0: top frame + title ---
@@ -364,20 +380,36 @@ void Panel::render()
     m_canvas.present();
 }
 
+static Panel::Entry load_entry(int fd, const char* name)
+{
+    using Entry = Panel::Entry;
+    using Type = Entry::Type;
+
+    struct stat st{};
+    if ( ::fstatat(fd, name, &st, AT_SYMLINK_NOFOLLOW) != 0 )
+        // mtime == -1 shows empty Date and Time.
+        return Entry{name, Type::File, 0, -1};
+
+    Type type;
+    if ( S_ISDIR(st.st_mode) )
+        type = Type::Directory;
+    else if ( S_ISLNK(st.st_mode) ) {
+        struct stat target;
+        if ( ::fstatat(fd, name, &target, 0) != 0 )
+            type = Type::BrokenSymlink;
+        else
+            type = S_ISDIR(target.st_mode) ? Type::SymlinkDir : Type::SymlinkFile;
+    }
+    else
+        type = Type::File;
+
+    return Entry{name, type, st.st_size, st.st_mtime};
+}
+
 void Panel::load_entries(std::string_view prev_path)
 {
     m_entries.clear();
-
-    const auto determine_type = [fd = m_directory.fd()](const char* name, mode_t mode) {
-        using Type = Entry::Type;
-        if ( S_ISDIR(mode) ) return Type::Directory;
-        if ( !S_ISLNK(mode) ) return Type::File;
-
-        struct stat target;
-        if ( ::fstatat(fd, name, &target, 0) != 0 )
-            return Type::BrokenSymlink;
-        return S_ISDIR(target.st_mode) ? Type::SymlinkDir : Type::SymlinkFile;
-    };
+    m_listing_error = 0;
 
     // Manually add ".." as the first entry in case the filesystem's readdir() does not
     // enumerate it. (mtime == -1 shows empty Date and Time.)
@@ -387,21 +419,22 @@ void Panel::load_entries(std::string_view prev_path)
         O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if ( scan_fd >= 0 ) {
         if ( DIR* dir = ::fdopendir(scan_fd) ) {
-            while ( auto* dirent = ::readdir(dir) ) {
+            // readdir() returns null for both EOF and failure; errno distinguishes them.
+            while ( auto* const dirent = (errno = 0, ::readdir(dir)) ) {
                 if ( std::strcmp(dirent->d_name, ".")  == 0 ) continue;
                 if ( std::strcmp(dirent->d_name, "..") == 0 ) continue;
-                struct stat st{};
-                const auto type = ::fstatat(m_directory.fd(), dirent->d_name, &st,
-                    AT_SYMLINK_NOFOLLOW) == 0
-                    ? determine_type(dirent->d_name, st.st_mode)
-                    : Entry::Type::File;
-                m_entries.emplace_back(dirent->d_name, type, st.st_size, st.st_mtime);
+                m_entries.push_back(load_entry(m_directory.fd(), dirent->d_name));
             }
+            m_listing_error = -errno;
             ::closedir(dir);  // closes both dir and scan_fd.
         }
-        else
+        else {
+            m_listing_error = errno;
             ::close(scan_fd);
+        }
     }
+    else
+        m_listing_error = errno;
 
     // ".." is already first; order the remaining snapshot as directories, then files.
     std::sort(m_entries.begin() + 1, m_entries.end(),
