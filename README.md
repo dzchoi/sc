@@ -56,7 +56,8 @@ stack.
 ## Build and run
 
 SC currently requires Linux, an X11 session, and zsh.<sup>1</sup> Building SC also
-requires the normal dependencies for `st`: Xlib, Xft, Fontconfig, and FreeType.
+requires the normal dependencies for `st`—Xlib, Xft, Fontconfig, and FreeType—plus
+libpng and `xxd` for embedding the application icon.
 
 Build and run SC from the repository:
 
@@ -67,7 +68,8 @@ make
 
 SC does not need to be installed. To run it somewhere else, copy `.build/sc` and
 `sc.zsh` into the same directory, then run `./sc` from there. The two files must remain
-together so SC can load its zsh integration.
+together so SC can load its zsh integration. The application icon is embedded in the
+executable.
 
 SC loads its zsh integration automatically; do not source `sc.zsh` from `.zshrc`.
 Zsh startup files and prompt configuration otherwise continue to work normally.
@@ -290,6 +292,9 @@ branch additionally applies these patches from the
   composition at the terminal cursor, including the composition caret and input-method
   feedback styles. Long compositions remain visible by shifting across the terminal
   row and marking text clipped at either edge.
+- [patch: netwmicon](https://st.suckless.org/patches/netwmicon/) publishes SC's
+  embedded application icon to X11 window managers and task switchers without
+  requiring a separate runtime icon file.
 
 ## License
 

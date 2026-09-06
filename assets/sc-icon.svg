@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="128" height="128" viewBox="0 0 32 32"
+     role="img" aria-labelledby="title">
+  <title id="title">Simple Commander</title>
+
+  <rect x="2.25" y="2.25" width="27.5" height="27.5" rx="2.75"
+        fill="#0b0c0d"/>
+
+  <g fill="#8a8d90">
+    <rect x="4.5" y="5"  width="10.25" height="2" rx="0.5"/>
+    <rect x="4.5" y="10" width="10.25" height="2" rx="0.5"/>
+    <rect x="4.5" y="15" width="10.25" height="2" rx="0.5"/>
+  </g>
+
+  <rect x="13.5" y="4" width="14.25" height="16.25"
+        fill="#16c7ed"/>
+  <path d="M14.5 5h12.25v3H14.5zm0 4h12.25v10.25H14.5z"
+        fill="#0639d5"/>
+  <rect x="15.5" y="10.75" width="10.25" height="2.25" rx="0.5"
+        fill="#f7f8f4"/>
+  <rect x="15.5" y="15.25" width="10.25" height="2.25" rx="0.5"
+        fill="#f7f8f4"/>
+
+  <path d="M5.5 22.25 9.5 25.25 5.5 28" fill="none"
+        stroke="#ffc400" stroke-width="2" stroke-linecap="round"
+        stroke-linejoin="round"/>
+  <path d="M13 28h4.5" fill="none" stroke="#f7f8f4"
+        stroke-width="2" stroke-linecap="round"/>
+</svg>
