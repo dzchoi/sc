@@ -82,6 +82,7 @@ install: $(BUILDDIR)/$(BIN)
 	mkdir -p $(DESTDIR)$(ICONPREFIX)
 	cp -f assets/sc-icon.svg $(DESTDIR)$(ICONPREFIX)/sc.svg
 	chmod 644 $(DESTDIR)$(ICONPREFIX)/sc.svg
+	[ -f $(ICONNAME) ] && cp -f $(ICONNAME) $(DESTDIR)$(ICONPREFIX) || :
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/$(BIN)
@@ -89,5 +90,6 @@ uninstall:
 	rm -f $(DESTDIR)$(APPPREFIX)/sc.desktop
 	rm -f $(DESTDIR)$(ICONPREFIX)/sc.svg
 	rm -f $(DESTDIR)$(MANPREFIX)/man1/st.1
+	rm -f $(DESTDIR)$(ICONPREFIX)/$(ICONNAME)
 
 .PHONY: all clean dist install uninstall
