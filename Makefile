@@ -9,7 +9,7 @@ include config.mk
 # libstdc++ is pulled in automatically.
 BUILDDIR = .build
 BIN		= sc
-SRC_C   = st.c x.c boxdraw.c
+SRC_C   = st.c x.c boxdraw.c icon.c
 SRC_CPP = comm.cpp panel.cpp canvas.cpp shell.cpp
 OBJ     = $(SRC_C:%.c=$(BUILDDIR)/%.o) $(SRC_CPP:%.cpp=$(BUILDDIR)/%.o)
 
@@ -34,13 +34,20 @@ $(BUILDDIR)/%.o: %.cpp | $(BUILDDIR)
 
 $(BUILDDIR)/canvas.o:  canvas.cpp canvas.hpp sc_config.hpp st.h win.h
 $(BUILDDIR)/st.o:      comm_api.h config.h st.h win.h
-$(BUILDDIR)/x.o:       arg.h comm_api.h config.h st.h win.h
+$(BUILDDIR)/x.o:       arg.h comm_api.h config.h icon.h st.h win.h
 $(BUILDDIR)/boxdraw.o: config.h st.h boxdraw_data.h
 $(BUILDDIR)/comm.o:    canvas.hpp comm.hpp comm_api.h panel.hpp sc_config.hpp shell.hpp st.h
 $(BUILDDIR)/panel.o:   canvas.hpp comm.hpp panel.hpp sc_config.hpp shell.hpp st.h win.h
 $(BUILDDIR)/shell.o:   canvas.hpp comm.hpp panel.hpp sc_config.hpp shell.hpp st.h
 
 $(OBJ): config.h config.mk
+
+$(BUILDDIR)/icon-data.h: assets/sc-icon-128.png | $(BUILDDIR)
+	xxd -i < $< > $@.tmp
+	mv $@.tmp $@
+
+$(BUILDDIR)/icon.o: icon.c icon.h $(BUILDDIR)/icon-data.h
+	$(CC) $(STCFLAGS) -I$(BUILDDIR) -c icon.c -o $@
 
 $(BUILDDIR)/$(BIN): $(OBJ)
 	$(CXX) -o $@ $(OBJ) $(STLDFLAGS)
@@ -58,10 +65,10 @@ dist: clean
 	mkdir -p st-$(VERSION)
 	mkdir -p st-$(VERSION)/assets
 	cp -R FAQ LEGACY TODO LICENSE Makefile README config.mk\
-		config.def.h st.info st.1 sc.desktop arg.h st.h win.h boxdraw_data.h comm_api.h panel.hpp comm.hpp shell.hpp canvas.hpp sc_config.hpp sc.zsh\
+		config.def.h st.info st.1 sc.desktop arg.h st.h win.h boxdraw_data.h comm_api.h icon.h panel.hpp comm.hpp shell.hpp canvas.hpp sc_config.hpp sc.zsh\
 		$(SRC_C) $(SRC_CPP)\
 		st-$(VERSION)
-	cp assets/sc-icon.svg st-$(VERSION)/assets
+	cp assets/sc-icon.svg assets/sc-icon-128.png st-$(VERSION)/assets
 	tar -cf - st-$(VERSION) | gzip > st-$(VERSION).tar.gz
 	rm -rf st-$(VERSION)
 
@@ -82,7 +89,6 @@ install: $(BUILDDIR)/$(BIN)
 	mkdir -p $(DESTDIR)$(ICONPREFIX)
 	cp -f assets/sc-icon.svg $(DESTDIR)$(ICONPREFIX)/sc.svg
 	chmod 644 $(DESTDIR)$(ICONPREFIX)/sc.svg
-	[ -f $(ICONNAME) ] && cp -f $(ICONNAME) $(DESTDIR)$(ICONPREFIX) || :
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/$(BIN)
@@ -90,6 +96,5 @@ uninstall:
 	rm -f $(DESTDIR)$(APPPREFIX)/sc.desktop
 	rm -f $(DESTDIR)$(ICONPREFIX)/sc.svg
 	rm -f $(DESTDIR)$(MANPREFIX)/man1/st.1
-	rm -f $(DESTDIR)$(ICONPREFIX)/$(ICONNAME)
 
 .PHONY: all clean dist install uninstall

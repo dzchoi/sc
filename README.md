@@ -56,14 +56,15 @@ stack.
 ## Build and run
 
 SC currently requires Linux, X11 or XWayland, and zsh.<sup>1</sup> Building SC also
-requires the normal dependencies for `st`: Xlib, Xft, Fontconfig, and FreeType.
+requires the normal dependencies for `st`—Xlib, Xft, Fontconfig, and FreeType—plus
+libpng and `xxd` for embedding the application icon.
 
 ```sh
-sudo dnf install -y libX11-devel libXft-devel fontconfig-devel freetype-devel
+sudo dnf install -y libX11-devel libXft-devel fontconfig-devel freetype-devel libpng-devel xxd
 ```
 
 ```sh
-sudo apt install -y libx11-dev libxft-dev libfontconfig1-dev libfreetype-dev
+sudo apt install -y libx11-dev libxft-dev libfontconfig1-dev libfreetype-dev libpng-dev xxd
 ```
 
 Build and run SC from the repository:
@@ -75,7 +76,8 @@ make
 
 SC does not need to be installed. To run it somewhere else, copy `.build/sc` and
 `sc.zsh` into the same directory, then run `./sc` from there. The two files must remain
-together so SC can load its zsh integration.
+together so SC can load its zsh integration. The application icon is embedded in the
+executable.
 
 Without installation, desktop shells that identify applications through desktop
 entries may show a generic icon under XWayland.
@@ -302,6 +304,9 @@ branch additionally applies these patches from the
   composition at the terminal cursor, including the composition caret and input-method
   feedback styles. Long compositions remain visible by shifting across the terminal
   row and marking text clipped at either edge.
+- [patch: netwmicon](https://st.suckless.org/patches/netwmicon/) publishes SC's
+  embedded application icon to X11 window managers and task switchers without
+  requiring a separate runtime icon file.
 
 ## License
 
