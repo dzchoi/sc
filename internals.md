@@ -176,6 +176,10 @@ cwd, editable buffer, command execution, and prompt.
   parser accepts the standard title-stack selectors while applying them to the X11
   window title, and terminal reset releases every saved title and restores the
   configured default.
+- Keep the compressed window icon in the executable. The build generates its C
+  initializer from the authoritative PNG. The icon module decodes and publishes it
+  through `_NET_WM_ICON` before the X11 layer maps the window; setup failure remains
+  nonfatal.
 - Keep Boxdraw attributes in terminal glyph state and its Xft primitives in
   `boxdraw.c`. `Canvas` keeps its field-control attribute on the next unused bit and
   classifies supported runes because panel glyphs bypass `tsetchar()`, so panel frame
