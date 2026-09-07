@@ -62,6 +62,8 @@ public:
     static void poll(int* term_dirty);
     // Presents every visible Canvas through xdrawline() when poll() selected a frame.
     static void draw_panels();
+    // Invalidates focus-dependent content before the X event schedules its frame.
+    static void window_focus_changed() { m_focus->dirty(); }
     // Assigns disjoint geometry without changing the terminal cursor.
     static void resize_panels(int cols, int rows);
     // Shortens a negative or finite event timeout for a pending resize prompt refresh.

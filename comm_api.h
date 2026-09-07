@@ -16,6 +16,7 @@ void shell_init(int pty_fd, pid_t shell_pid);
 
 void panel_poll(int* term_dirty);
 void panel_draw(void);
+void panel_window_focus_changed(void);
 void panel_resize(int cols, int rows);
 void panel_adjust_timeout(double* timeout_ms);
 void panel_refresh_prompt(void);

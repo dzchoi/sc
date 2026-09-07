@@ -110,6 +110,11 @@ Terminal clipboard shortcuts remain in `x.c` and run before panel input. Ctrl+C 
 an active terminal selection; without one, it writes the ordinary Ctrl+C byte to the
 PTY so the terminal line discipline can interrupt the foreground process.
 
+X11's existing `MODE_FOCUSED` bit also controls the focused panel's title and selector.
+Focus transitions invalidate that panel's cached canvas before the event-driven frame,
+so both are unhighlighted while the SC window is inactive and return without changing
+the retained focus or selection.
+
 Ctrl+O is handled before effective visibility so it can restore hidden panels. `x.c`
 removes lock modifiers before dispatch, preserving shortcuts under Caps Lock and Num
 Lock. `Panel` redraws immediately for selection input only when the selection changes;

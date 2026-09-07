@@ -212,6 +212,7 @@ void shell_service_ipc(void) { Comm::shell_service_ipc(); }
 
 void panel_poll(int* term_dirty) { Comm::poll(term_dirty); }
 void panel_draw(void) { Comm::draw_panels(); }
+void panel_window_focus_changed(void) { Comm::window_focus_changed(); }
 
 void panel_resize(int cols, int rows) { Comm::resize_panels(cols, rows); }
 void panel_adjust_timeout(double* timeout_ms) { Comm::adjust_timeout(*timeout_ms); }

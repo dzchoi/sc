@@ -36,7 +36,7 @@ $(BUILDDIR)/canvas.o:  canvas.cpp canvas.hpp sc_config.hpp st.h win.h
 $(BUILDDIR)/st.o:      comm_api.h config.h st.h win.h
 $(BUILDDIR)/x.o:       arg.h comm_api.h config.h st.h win.h
 $(BUILDDIR)/comm.o:    canvas.hpp comm.hpp comm_api.h panel.hpp sc_config.hpp shell.hpp st.h
-$(BUILDDIR)/panel.o:   canvas.hpp comm.hpp panel.hpp sc_config.hpp shell.hpp st.h
+$(BUILDDIR)/panel.o:   canvas.hpp comm.hpp panel.hpp sc_config.hpp shell.hpp st.h win.h
 $(BUILDDIR)/shell.o:   canvas.hpp comm.hpp panel.hpp sc_config.hpp shell.hpp st.h
 
 $(OBJ): config.h config.mk

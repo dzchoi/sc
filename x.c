@@ -1755,6 +1755,8 @@ xsetmode(int set, unsigned int flags)
 {
 	int mode = win.mode;
 	MODBIT(win.mode, set, flags);
+	if ((win.mode & MODE_FOCUSED) != (mode & MODE_FOCUSED))
+		panel_window_focus_changed();
 	if ((win.mode & MODE_REVERSE) != (mode & MODE_REVERSE))
 		redraw();
 }
@@ -1798,17 +1800,23 @@ focus(XEvent *ev)
 	if (ev->type == FocusIn) {
 		if (xw.ime.xic)
 			XSetICFocus(xw.ime.xic);
-		win.mode |= MODE_FOCUSED;
+		xsetmode(1, MODE_FOCUSED);
 		xseturgency(0);
 		if (IS_SET(MODE_FOCUS))
 			ttywrite("\033[I", 3, 0);
 	} else {
 		if (xw.ime.xic)
 			XUnsetICFocus(xw.ime.xic);
-		win.mode &= ~MODE_FOCUSED;
+		xsetmode(0, MODE_FOCUSED);
 		if (IS_SET(MODE_FOCUS))
 			ttywrite("\033[O", 3, 0);
 	}
+}
+
+int
+xwindowfocused(void)
+{
+	return IS_SET(MODE_FOCUSED);
 }
 
 int
@@ -1921,10 +1929,10 @@ cmessage(XEvent *e)
 	 */
 	if (e->xclient.message_type == xw.xembed && e->xclient.format == 32) {
 		if (e->xclient.data.l[1] == XEMBED_FOCUS_IN) {
-			win.mode |= MODE_FOCUSED;
+			xsetmode(1, MODE_FOCUSED);
 			xseturgency(0);
 		} else if (e->xclient.data.l[1] == XEMBED_FOCUS_OUT) {
-			win.mode &= ~MODE_FOCUSED;
+			xsetmode(0, MODE_FOCUSED);
 		}
 	} else if (e->xclient.data.l[0] == xw.wmdeletewin) {
 		ttyhangup();

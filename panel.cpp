@@ -22,6 +22,10 @@
 #include "panel.hpp"            // for Panel
 #include "sc_config.hpp"        // for SC configuration constants
 
+extern "C" {
+#include "win.h"                // for xwindowfocused()
+}
+
 
 
 PanelDirectory::PanelDirectory(std::string cwd, int fd)
@@ -228,7 +232,7 @@ void Panel::render()
         const int list_rows = height - kRowsPanelFrame;  // excludes header and footer.
         const uint32_t fg = kFgDefault;
         const uint32_t bg = kBgDefault;
-        const bool focused = Comm::is_focused(this);
+        const bool focused = Comm::is_focused(this) && xwindowfocused();
         auto draw = std::move(m_canvas.draw());
 
         std::string title(cwd());

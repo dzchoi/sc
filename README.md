@@ -94,10 +94,12 @@ upper-right part of the terminal, leaving the prompt and command line available 
 it. Press `Ctrl+P` to show both panels. Both begin in the starting directory, then
 remember their own directories and selections as you use them.
 
-The panel title names its directory and is highlighted when the panel has focus. Each
-listing begins with `..`, followed by directories and then files; each group is sorted
-by name. The columns show each entry's name, size or type, and modification time, while
-the footer shows the same details for the selected entry.
+The panel title names its directory and is highlighted when the panel and SC window
+have focus. The title and selector are unhighlighted while the window is inactive and
+return when it regains focus. Each listing begins with `..`, followed by directories
+and then files; each group is sorted by name. The columns show each entry's name, size
+or type, and modification time, while the footer shows the same details for the
+selected entry.
 
 If a listing cannot be completed, `..` remains available and the title reports the
 directory as `(unreadable)`, `(unavailable)`, or `(incomplete)`.
