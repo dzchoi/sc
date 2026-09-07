@@ -237,21 +237,16 @@ void Panel::render()
             if ( title.compare(0, home_len, home) == 0 && title[home_len] == '/' )
                 title.replace(0, home_len, "~");
         }
-        if ( m_listing_error ) {
-            const char* marker;
-            if ( m_listing_error < 0 )
-                marker = " (incomplete)";
-            else if ( m_listing_error == EACCES || m_listing_error == EPERM )
-                marker = " (unreadable)";
-            else
-                marker = " (unavailable)";
+        // Omit the trailing slash from the title so any following listing marker reads
+        // as status rather than part of a directory name.
+        if ( title.size() > 1 )
+            title.pop_back();
 
-            // PanelDirectory guarantees a slash-terminated display cwd. Keep that slash
-            // last when adding status, including after procfs's " (deleted)" suffix.
-            if ( title.size() > 1 )
-                title.insert(title.size() - 1, marker);
-            else
-                title += marker;  // e.g. "/ (unavailable)"
+        if ( m_listing_error ) {
+            const char* marker = m_listing_error < 0 ? " (incomplete)"
+                : m_listing_error == EACCES || m_listing_error == EPERM ? " (unreadable)"
+                : " (unavailable)";
+            title += marker;
         }
 
         // --- Row 0: top frame + title ---

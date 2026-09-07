@@ -67,12 +67,12 @@ links without changing the metadata recorded for the link itself.
 Synthetic `..` is inserted before scanning and remains even when the directory cannot
 be scanned or has been unlinked and emptied. A failed scan retains its error and marks
 the title as `(unreadable)` when opening is denied, `(unavailable)` when opening
-otherwise fails, or `(incomplete)` when `readdir()` fails. The scan marker precedes the
-title's trailing slash except for root, whose leading slash remains first. An unlinked
-directory can independently report both `(deleted)` and its listing state. Metadata
-lookup failure retains the name with a file type, zero size, and unknown modification
-time, matching the panel's role as a cached presentation; Zsh validates a selected live
-entry before navigation.
+otherwise fails, or `(incomplete)` when `readdir()` fails. Rendering omits the internal
+trailing separator except for root, then appends the scan marker to the displayed path.
+An unlinked directory can independently report both `(deleted)` and its listing state.
+Metadata lookup failure retains the name with a file type, zero size, and unknown
+modification time, matching the panel's role as a cached presentation; Zsh validates a
+selected live entry before navigation.
 
 Before replacing a panel handle, `Panel::reload()` compares `st_dev` and `st_ino` for
 the old and new descriptors:
@@ -87,6 +87,15 @@ Path-string equality alone cannot distinguish those directories.
 
 Reloading retains the viewport. After selection restoration, `render()` moves it only
 as far as needed to keep the selected entry visible.
+
+## Snapshot presentation
+
+The panel presents each snapshot in columns for name, size or type, modification date,
+and modification time, then repeats those details for the selected entry in the footer.
+Directory names end in a cyan `/`. Symlinks show `SYMLINK` in the size column and end
+in a cyan `@`, `>`, or `!` for a non-directory target, directory target, or unresolved
+target, respectively. A selected indicator uses the normal foreground so reverse video
+covers the complete name uniformly.
 
 ## Switching panels
 

@@ -94,20 +94,13 @@ upper-right part of the terminal, leaving the prompt and command line available 
 it. Press `Ctrl+P` to show both panels. Both begin in the starting directory, then
 remember their own directories and selections as you use them.
 
-The directory name appears in the panel title, with the user's home directory shown as
-`~`, and is highlighted only when that panel has focus. The title retains the shell's
-logical path, such as `/bin/` when `/bin` links to `/usr/bin`, while that path still
-names the displayed directory. Entries are ordered with `..` first, then directories
-(including symlinks to directories), then files; entries are sorted by name within
-those groups. A failed listing retains `..` and marks the title as `(unreadable)` when
-opening is denied, `(unavailable)` when opening otherwise fails, or `(incomplete)` when
-enumeration begins but fails. The marker remains visible alongside an existing
-`(deleted)` marker. The columns show the entry name, size or directory marker,
-modification date, and modification time. Directories end in a cyan `/`;
-symlinks end in a cyan `@`, `>`, or `!` for a non-directory target, directory target,
-or unresolved target, respectively, and show `SYMLINK` in the size column. A
-highlighted indicator uses the normal foreground so the entire selected name reverses
-uniformly. The panel footer shows details for the selected entry.
+The panel title names its directory and is highlighted when the panel has focus. Each
+listing begins with `..`, followed by directories and then files; each group is sorted
+by name. The columns show each entry's name, size or type, and modification time, while
+the footer shows the same details for the selected entry.
+
+If a listing cannot be completed, `..` remains available and the title reports the
+directory as `(unreadable)`, `(unavailable)`, or `(incomplete)`.
 
 Panels require a terminal at least 80 columns wide and 12 rows high. They disappear
 below that size and return when the terminal is large enough again.
