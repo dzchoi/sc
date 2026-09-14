@@ -187,7 +187,8 @@ _sc_run_user_command() {
     local -i prompt_lines=$BUFFERLINES
     zle -I && (( _sc_prompt_padding += prompt_lines ))
     # Each array element is passed as one argument, so no additional quoting is needed.
-    command "${argv[@]}"
+    # Reconnect stdin to TTY (ZLE sets stdin to /dev/null).
+    command "${argv[@]}" </dev/tty
     _sc_refresh_prompt
 }
 

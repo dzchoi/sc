@@ -6,3 +6,4 @@ config.h
 /.config
 /.research
 /.vscode
+.distrobox-name

@@ -58,6 +58,14 @@ stack.
 SC currently requires Linux, an X11 session, and zsh.<sup>1</sup> Building SC also
 requires the normal dependencies for `st`: Xlib, Xft, Fontconfig, and FreeType.
 
+```sh
+sudo dnf install -y libX11-devel libXft-devel fontconfig-devel freetype-devel libpng-devel xxd
+```
+
+```sh
+sudo apt install -y libx11-dev libxft-dev libfontconfig1-dev libfreetype-dev libpng-dev xxd
+```
+
 Build and run SC from the repository:
 
 ```sh

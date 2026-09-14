@@ -56,7 +56,10 @@ F3 and F4 remain ordinary terminal key sequences and are bound directly by `sc.z
 SC for the selected name, substitutes its absolute path for a standalone `{}` argument
 (or appends it when absent), and executes the resulting argument vector without
 evaluating it as shell code. It invalidates the active ZLE display before execution and
-passes the command status through `_sc_refresh_prompt`.
+passes the command status through `_sc_refresh_prompt`. Zsh redirects every user-defined
+ZLE widget's standard input from `/dev/null`; the shared widget reconnects the child
+command to `/dev/tty` so interactive programs receive terminal input and retain ordinary
+terminal-mode ownership.
 
 Plain Enter is deliberately not consumed by the panel. `_sc_enter` owns it:
 
