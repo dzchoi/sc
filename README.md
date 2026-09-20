@@ -55,15 +55,15 @@ stack.
 
 ## Build and run
 
-SC currently requires Linux, an X11 session, and zsh.<sup>1</sup> Building SC also
+SC currently requires Linux, X11 or XWayland, and zsh.<sup>1</sup> Building SC also
 requires the normal dependencies for `st`: Xlib, Xft, Fontconfig, and FreeType.
 
 ```sh
-sudo dnf install -y libX11-devel libXft-devel fontconfig-devel freetype-devel libpng-devel xxd
+sudo dnf install -y libX11-devel libXft-devel fontconfig-devel freetype-devel
 ```
 
 ```sh
-sudo apt install -y libx11-dev libxft-dev libfontconfig1-dev libfreetype-dev libpng-dev xxd
+sudo apt install -y libx11-dev libxft-dev libfontconfig1-dev libfreetype-dev
 ```
 
 Build and run SC from the repository:
@@ -77,23 +77,27 @@ SC does not need to be installed. To run it somewhere else, copy `.build/sc` and
 `sc.zsh` into the same directory, then run `./sc` from there. The two files must remain
 together so SC can load its zsh integration.
 
+Without installation, desktop shells that identify applications through desktop
+entries may show a generic icon under XWayland.
+
 SC loads its zsh integration automatically; do not source `sc.zsh` from `.zshrc`.
 Zsh startup files and prompt configuration otherwise continue to work normally.
 Launching zsh with startup files disabled, as with `zsh -f`, is not supported.
 
 ### Installation status
 
-A complete SC installation target has not been implemented yet. The repository still
-contains the inherited `make install` target, including support for a custom prefix:
+The installation target supports a custom prefix:
 
 ```sh
 make install
 make PREFIX=/your/prefix install
 ```
 
-These commands copy the SC executable and zsh integration, but the installed manual
-page and other user-facing installation material still describe `st`, not SC. Until
-the installation target is converted for SC, use the copy-and-run method above.
+These commands install the executable and zsh integration together, register
+`sc.desktop`, and install the scalable application icon. The desktop entry identifies
+Simple Commander windows by their default `sc` X11 class, including when SC runs
+through XWayland. The inherited manual page and some other installation material still
+describe `st`.
 
 ## Getting started
 

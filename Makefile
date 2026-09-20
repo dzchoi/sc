@@ -55,10 +55,12 @@ clean:
 
 dist: clean
 	mkdir -p st-$(VERSION)
+	mkdir -p st-$(VERSION)/assets
 	cp -R FAQ LEGACY TODO LICENSE Makefile README config.mk\
-		config.def.h st.info st.1 arg.h st.h win.h comm_api.h panel.hpp comm.hpp shell.hpp canvas.hpp sc_config.hpp sc.zsh\
+		config.def.h st.info st.1 sc.desktop arg.h st.h win.h comm_api.h panel.hpp comm.hpp shell.hpp canvas.hpp sc_config.hpp sc.zsh\
 		$(SRC_C) $(SRC_CPP)\
 		st-$(VERSION)
+	cp assets/sc-icon.svg st-$(VERSION)/assets
 	tar -cf - st-$(VERSION) | gzip > st-$(VERSION).tar.gz
 	rm -rf st-$(VERSION)
 
@@ -73,10 +75,18 @@ install: $(BUILDDIR)/$(BIN)
 	chmod 644 $(DESTDIR)$(MANPREFIX)/man1/st.1
 	tic -sx st.info
 	@echo Please see the README file regarding the terminfo entry of st.
+	mkdir -p $(DESTDIR)$(APPPREFIX)
+	cp -f sc.desktop $(DESTDIR)$(APPPREFIX)/sc.desktop
+	chmod 644 $(DESTDIR)$(APPPREFIX)/sc.desktop
+	mkdir -p $(DESTDIR)$(ICONPREFIX)
+	cp -f assets/sc-icon.svg $(DESTDIR)$(ICONPREFIX)/sc.svg
+	chmod 644 $(DESTDIR)$(ICONPREFIX)/sc.svg
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/$(BIN)
 	rm -f $(DESTDIR)$(PREFIX)/bin/sc.zsh
+	rm -f $(DESTDIR)$(APPPREFIX)/sc.desktop
+	rm -f $(DESTDIR)$(ICONPREFIX)/sc.svg
 	rm -f $(DESTDIR)$(MANPREFIX)/man1/st.1
 
 .PHONY: all clean dist install uninstall

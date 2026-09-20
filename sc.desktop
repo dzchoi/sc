@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Simple Commander
+GenericName=File Manager and Terminal
+Comment=Browse files alongside an interactive shell
+Exec=sc
+TryExec=sc
+Icon=sc
+Terminal=false
+Categories=System;FileManager;TerminalEmulator;
+StartupWMClass=sc

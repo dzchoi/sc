@@ -165,3 +165,7 @@ cwd, editable buffer, command execution, and prompt.
   attributes expected by the X renderer because panel glyphs bypass `tsetchar()`.
   Zero-width runes are omitted because the canvas stores one drawable rune per occupied
   cell rather than grapheme clusters.
+- Give Simple Commander a stable `sc` X11 class and install its desktop entry and
+  scalable icon through the freedesktop locations. Application-oriented desktop shells
+  use that identity to associate windows with the application, including through
+  XWayland.
